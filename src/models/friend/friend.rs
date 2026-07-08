@@ -20,7 +20,7 @@ pub struct FriendSummary {
     pub friend_key: Option<String>,
 }
 
-pub type FriendList = crate::models::Common::Paginated<FriendSummary>;
+pub type FriendList = crate::models::common::Paginated<FriendSummary>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,4 +1,4 @@
-pub type UserNotes = crate::models::Common::Paginated<UserNote>;
+pub type UserNotes = crate::models::common::Paginated<UserNote>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

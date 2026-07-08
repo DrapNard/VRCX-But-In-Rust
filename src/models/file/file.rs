@@ -8,7 +8,7 @@ pub enum FileStatus {
     Unknown,
 }
 
-pub type FileList = crate::models::Common::Paginated<File>;
+pub type FileList = crate::models::common::Paginated<File>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

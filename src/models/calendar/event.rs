@@ -64,7 +64,7 @@ pub struct CalendarEventSummary {
     pub visibility: CalendarEventVisibility,
 }
 
-pub type CalendarEventList = crate::models::Common::Paginated<CalendarEventSummary>;
+pub type CalendarEventList = crate::models::common::Paginated<CalendarEventSummary>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

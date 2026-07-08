@@ -1,4 +1,4 @@
-pub type ModerationReports = crate::models::Common::Paginated<ModerationReport>;
+pub type ModerationReports = crate::models::common::Paginated<ModerationReport>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -18,4 +18,4 @@ pub struct Favorite {
     pub tags: Vec<String>,
 }
 
-pub type FavoriteList = crate::models::Common::Paginated<Favorite>;
+pub type FavoriteList = crate::models::common::Paginated<Favorite>;

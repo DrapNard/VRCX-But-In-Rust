@@ -1,4 +1,4 @@
-pub type ProductListingList = crate::models::Common::Paginated<ProductListing>;
+pub type ProductListingList = crate::models::common::Paginated<ProductListing>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -14,4 +14,4 @@ pub struct Notification {
     pub created_at: String,
 }
 
-pub type NotificationLegacyList = crate::models::Common::Paginated<Notification>;
+pub type NotificationLegacyList = crate::models::common::Paginated<Notification>;
