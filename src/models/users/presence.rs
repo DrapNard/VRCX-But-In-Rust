@@ -2,7 +2,7 @@ use crate::models::instance::InstanceSummary;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Traveling{
+pub enum Traveling {
     None,
     Offline,
     Traveling,

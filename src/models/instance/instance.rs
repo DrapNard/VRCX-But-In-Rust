@@ -1,8 +1,8 @@
+use super::{Capacity, Flags, Identity, Privacy, Region};
 use crate::models::common::default_content_settings::DefaultContentSettings;
 use crate::models::common::platform::Platform;
 use crate::models::users::UserSummary;
 use crate::models::world::WorldSummary;
-use super::{Identity, Capacity, Privacy, Region, Flags};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,5 +25,4 @@ pub struct Instance {
     pub users: Vec<UserSummary>,
     pub flags: Vec<Flags>,
     pub owner: Option<UserSummary>,
-    
 }

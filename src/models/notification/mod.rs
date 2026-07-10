@@ -2,19 +2,10 @@ pub mod legacy;
 pub mod notification;
 pub mod payload;
 
-pub use legacy::{Notification, NotificationLegacyList};
 pub use notification::{
-    NotificationDetails,
-    NotificationList,
-    NotificationResponse,
-    NotificationSender,
-    NotificationStatus,
-    NotificationType,
-    NotificationV2,
+    NotificationDetails, NotificationList, NotificationResponse, NotificationSender,
+    NotificationType, NotificationV2,
 };
 pub use payload::{
-    AcknowledgeNotifications,
-    ClearNotifications,
-    NotificationReply,
-    NotificationRespond,
+    AcknowledgeNotifications, ClearNotifications, NotificationReply, NotificationRespond,
 };

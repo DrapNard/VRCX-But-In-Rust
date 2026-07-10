@@ -6,6 +6,7 @@ pub enum FavoriteType {
     Avatar,
     Prop,
     Group,
+    #[serde(other)]
     Unknown,
 }
 
@@ -14,6 +15,7 @@ pub enum FavoriteType {
 pub struct Favorite {
     pub id: String,
     pub favorite_id: String,
+    #[serde(rename = "type")]
     pub favorite_type: FavoriteType,
     pub tags: Vec<String>,
 }

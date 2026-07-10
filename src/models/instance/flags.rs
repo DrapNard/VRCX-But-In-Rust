@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Flags{
+pub enum Flags {
     Active,
     Permanent,
     HardClose,
@@ -8,5 +8,5 @@ pub enum Flags{
     QueueEnabled,
     InstancePersistenceEnabled,
     PlayerPersistenceEnabled,
-    RoleRestricted
+    RoleRestricted,
 }

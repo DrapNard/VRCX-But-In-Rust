@@ -2,12 +2,32 @@
 name = "vrcx-but-in-rust"
 version = "0.1.0"
 edition = "2024"
+authors = ["DrapNard"]
+license = "MIT"
+description = "A native, lightweight, cross-platform VRChat companion app written in Rust."
+homepage = "https://github.com/DrapNard/VRCX-But-In-Rust"
+repository = "https://github.com/DrapNard/VRCX-But-In-Rust"
+readme = "README.md"
+keywords = ["vrchat", "desktop", "iced", "companion"]
+categories = ["gui"]
 
 [dependencies]
 futures-util = "0.3.32"
-iced = { version = "0.14", features = ["tokio"] }
-tokio = "1.52.3"
-tokio-tungstenite = "0.29.0"
+iced = { version = "0.14", features = ["tokio", "image"] }
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 url = "2.5.8"
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.13", features = ["json", "cookies", "gzip", "brotli", "deflate"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_urlencoded = "0.7"
+serde_json = "1"
+keyring = "4"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "6"
+moka = { version = "0.12", features = ["future"] }
+redb = "4"
+base64 = "0.22.1"
+urlencoding = "2.1.3"

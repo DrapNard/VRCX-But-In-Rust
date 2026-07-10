@@ -5,6 +5,7 @@ pub enum FileStatus {
     Complete,
     Error,
     Deleted,
+    #[serde(other)]
     Unknown,
 }
 
@@ -25,21 +26,32 @@ pub struct File {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileVersion {
+    #[serde(default)]
     pub version: u32,
     pub status: FileStatus,
-    pub file: FileUploadPart,
+    #[serde(default)]
+    pub file: Option<FileUploadPart>,
+    #[serde(default)]
     pub delta: Option<FileUploadPart>,
+    #[serde(default)]
     pub signature: Option<FileUploadPart>,
+    #[serde(default)]
     pub created_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileUploadPart {
+    #[serde(default)]
     pub category: String,
+    #[serde(default)]
     pub file_name: String,
+    #[serde(default)]
     pub size_in_bytes: u64,
+    #[serde(default)]
     pub md5: Option<String>,
+    #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
     pub upload_id: Option<String>,
 }

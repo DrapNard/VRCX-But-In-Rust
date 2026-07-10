@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ContentWarnings{
+pub enum ContentWarnings {
     Adult,
     Combat,
     Featured,
@@ -13,7 +13,7 @@ pub enum ContentWarnings{
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum SystemFlags{
+pub enum SystemFlags {
     Approved,
     CreatedRecently,
     Labs,
@@ -21,7 +21,7 @@ pub enum SystemFlags{
     PublishedRecently,
     MonetizedWorld,
     PositiveFunToExplore,
-    JamTags
+    JamTags,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

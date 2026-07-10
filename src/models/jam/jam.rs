@@ -4,19 +4,34 @@ pub enum JamState {
     Upcoming,
     Active,
     Ended,
+    #[serde(other)]
     Unknown,
+}
+
+impl Default for JamState {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JamSummary {
+    #[serde(default)]
     pub id: String,
+    #[serde(default, alias = "title")]
     pub name: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub image_url: Option<String>,
+    #[serde(default)]
     pub banner_url: Option<String>,
+    #[serde(default)]
     pub state: JamState,
+    #[serde(default)]
     pub starts_at: Option<String>,
+    #[serde(default)]
     pub ends_at: Option<String>,
 }
 

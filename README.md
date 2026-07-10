@@ -130,50 +130,50 @@ This project does not aim to:
 Building
 
 Install Rust:
-
+```shell
 rustup update
-
+```
 Clone the repository:
-
+```shell
 git clone <repo-url>
 cd vrcx-but-in-rust
-
+```
 Build the project:
-
+```shell
 cargo build
-
+```
 Run the project:
-
+```shell
 cargo run
-
+```
 For release builds:
-
+```shell
 cargo build --release
-
+```
 Development Commands
 
 Format code:
-
+```shell
 cargo fmt
-
+```
 Run Clippy:
-
+```shell
 cargo clippy --all-targets --all-features
-
+```
 Run tests:
-
+```shell
 cargo test
-
+```
 Check without building binaries:
-
+```shell
 cargo check
-
+```
 Recommended full local check:
-
+```shell
 cargo fmt
 cargo clippy --all-targets --all-features
 cargo test
-
+```
 API Model Design
 
 The project tries to keep VRChat API models strongly typed while preserving unknown or future fields when useful.
@@ -181,7 +181,7 @@ The project tries to keep VRChat API models strongly typed while preserving unkn
 For example, tags should avoid becoming a loose Vec<String> everywhere. Instead, known tags should be parsed into enums or structured fields, while unknown raw tags should be preserved.
 
 Example direction:
-
+```rust
 pub struct Tags {
 pub trust_rank: TrustRank,
 pub troll_state: TrollState,
@@ -191,9 +191,9 @@ pub permissions: Permissions,
 pub languages: Vec<LanguageTag>,
 pub raw: Vec<String>,
 }
-
+```
 For world tags, known content warnings and system flags should be parsed into explicit enums.
-
+```rust
 pub enum ContentWarning {
 Adult,
 Combat,
@@ -214,7 +214,7 @@ MonetizedWorld,
 PositiveFunToExplore,
 JamTags,
 }
-
+```
 Unknown tags should not be discarded. They should remain accessible through a raw/unknown field.
 
 Error Handling
@@ -230,13 +230,13 @@ Prefer:
 * recoverable UI states
 
 Bad:
-
+```rust
 let value = something.unwrap();
-
+```
 Better:
-
+```rust
 let value = something.ok_or(AppError::MissingField("value"))?;
-
+```
 Logging
 
 Use structured logging through tracing.
@@ -244,11 +244,11 @@ Use structured logging through tracing.
 Avoid random println! debugging in committed code unless it is part of CLI output or temporary prototype code.
 
 Recommended:
-
+```rust
 tracing::info!("loaded user profile");
 tracing::warn!(user_id = %id, "failed to refresh user");
 tracing::error!(error = ?err, "api request failed");
-
+```
 Configuration
 
 Configuration should eventually support:

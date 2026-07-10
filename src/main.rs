@@ -1,42 +1,25 @@
-use crate::models::users::User;
+#![allow(dead_code)]
+
 mod api;
+mod backend;
 mod client;
 mod error;
 mod models;
 mod session;
-use iced::widget::{Column, button, column, text};
-
-#[derive(Default)]
-struct Counter {
-    value: i64,
-}
-
-#[derive(Clone)]
-enum Message {
-    Increment,
-    Decrement,
-}
-
-impl Counter {
-    fn update(&mut self, message: Message) {
-        match message {
-            Message::Increment => {
-                self.value += 1;
-            }
-            Message::Decrement => {
-                self.value -= 1;
-            }
-        }
-    }
-    fn view(&self) -> Column<Message> {
-        column![
-            button("+").on_press(Message::Increment),
-            text(self.value),
-            button("-").on_press(Message::Decrement),
-        ]
-    }
-}
+mod store;
+mod ui;
+mod websocket;
 
 pub fn main() -> iced::Result {
-    iced::run(Counter::update, Counter::view)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "vrcx_but_in_rust=info".into()),
+        )
+        .with_target(false)
+        .compact()
+        .init();
+
+    tracing::info!("starting VRCX Rust");
+    ui::run()
 }

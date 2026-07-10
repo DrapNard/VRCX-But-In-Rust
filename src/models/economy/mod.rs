@@ -13,5 +13,5 @@ pub use license::{ActiveLicense, LicenseGroup};
 pub use payload::{ProductPurchaseCreate, TiliaTosUpdate};
 pub use product::{ProductListing, ProductListingList, ProductPurchase};
 pub use store::{Store, StoreShelf};
-pub use subscription::{Subscription, SubscriptionList};
-pub use transaction::{SteamTransaction, TokenBundle};
+pub use subscription::SubscriptionList;
+pub use transaction::TokenBundle;

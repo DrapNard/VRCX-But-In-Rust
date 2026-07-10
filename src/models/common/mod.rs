@@ -3,5 +3,5 @@ pub mod media;
 pub mod pagination;
 pub mod platform;
 
-pub use media::{ImagePair, OptionalImagePair};
+pub use media::ImagePair;
 pub use pagination::Paginated;

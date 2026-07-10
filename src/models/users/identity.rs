@@ -6,6 +6,7 @@ pub enum UserStatus {
     AskMe,
     Busy,
     Offline,
+    #[serde(other)]
     Unknown,
 }
 

@@ -16,6 +16,6 @@ pub use identity::Identity;
 pub use media::Media;
 pub use performance::{Performance, PerformanceRating};
 pub use product_listing::ProductListing;
-pub use publication::{Publication, ReleaseStatus};
+pub use publication::Publication;
 pub use styles::Styles;
-pub use unity_package::{UnityPackage, UnityPackageUrl};
+pub use unity_package::UnityPackage;

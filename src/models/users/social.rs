@@ -1,5 +1,5 @@
-use crate::models::group::GroupSummary;
 use super::identity::Identity;
+use crate::models::group::GroupSummary;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

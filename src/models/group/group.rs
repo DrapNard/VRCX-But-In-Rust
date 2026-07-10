@@ -34,8 +34,8 @@ pub struct GroupSearchResult {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
     pub name: String,
@@ -70,4 +70,36 @@ pub struct Group {
     pub created_at: String,
     pub updated_at: String,
     pub last_post_created_at: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_group_when_roles_and_optional_fields_are_absent() {
+        let group: Group = serde_json::from_value(serde_json::json!({
+            "id": "grp_123",
+            "name": "Example",
+            "shortCode": "EX",
+            "description": "",
+            "ownerId": "usr_123",
+            "iconUrl": null,
+            "bannerUrl": null,
+            "badges": [],
+            "galleries": [],
+            "joinState": "invite",
+            "membershipStatus": "inactive",
+            "privacy": "default",
+            "tags": [],
+            "languages": [],
+            "links": [],
+            "memberCount": 0,
+            "isVerified": false
+        }))
+        .unwrap();
+
+        assert!(group.roles.is_empty());
+        assert_eq!(group.id, "grp_123");
+    }
 }

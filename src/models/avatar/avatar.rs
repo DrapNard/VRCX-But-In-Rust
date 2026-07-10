@@ -1,14 +1,5 @@
+use super::{Asset, Economy, Identity, Media, Performance, Publication, Styles, UnityPackage};
 use crate::models::users::UserSummary;
-use super::{
-    Asset,
-    Economy,
-    Identity,
-    Media,
-    Performance,
-    Publication,
-    Styles,
-    UnityPackage,
-};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
