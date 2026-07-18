@@ -191,8 +191,9 @@ It is fully event-driven: the transparent window is opened for active notificati
 soon as the bounded queue is empty, with no idle polling or frame-based animation.
 
 On first launch the application creates `screen-overlay.json` in its platform configuration
-directory. Each pipeline event has its own rule. An empty `selected_users` list accepts everyone;
-fill it with VRChat user IDs to notify only for selected people:
+directory. Notifications are disabled by default, and user-related rules initially target favorite
+friends only. Set `favorites_only` to `false` with an empty `selected_users` list for everyone, or
+fill `selected_users` with VRChat user IDs for an explicit selection:
 
 The same settings are available from the application's general Settings dialog. Its tester renders
 the currently selected event rule with sample values before the editor saves it.
@@ -212,6 +213,7 @@ the currently selected event rule with sample values before the editor saves it.
     "friend-online": {
       "enabled": true,
       "selected_users": ["usr_example"],
+      "favorites_only": false,
       "title": "{name} is online",
       "body": "Connected from {platform}",
       "accent": "#6C8CFF",

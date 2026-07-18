@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
     io::Cursor,
     path::PathBuf,
@@ -174,6 +174,13 @@ struct ResultItem {
     raw: Value,
 }
 
+#[derive(Debug, Clone)]
+struct FavoriteFriendGroup {
+    name: String,
+    display_name: String,
+    friend_ids: HashSet<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OwnAvatarQuery {
@@ -260,18 +267,26 @@ enum DetailTab {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum FriendSection {
-    InVrchat,
-    Web,
     Favorites,
+    InVrchat,
+    Private,
+    Web,
     Offline,
 }
 
 impl FriendSection {
-    const ALL: [Self; 4] = [Self::InVrchat, Self::Web, Self::Favorites, Self::Offline];
+    const ALL: [Self; 5] = [
+        Self::Favorites,
+        Self::InVrchat,
+        Self::Private,
+        Self::Web,
+        Self::Offline,
+    ];
 
     fn label(self) -> String {
         match self {
             Self::InVrchat => t!("friends.sections.in_vrchat").to_string(),
+            Self::Private => t!("friends.sections.private").to_string(),
             Self::Web => t!("friends.sections.web").to_string(),
             Self::Favorites => t!("friends.sections.favorites").to_string(),
             Self::Offline => t!("friends.sections.offline").to_string(),
@@ -386,8 +401,10 @@ pub struct App {
     thumbnails: HashMap<String, image::Handle>,
     pending_thumbnails: HashSet<String>,
     world_names: HashMap<String, String>,
+    world_image_urls: HashMap<String, String>,
     pending_world_names: HashSet<String>,
     favorite_friend_ids: HashSet<String>,
+    favorite_friend_groups: Vec<FavoriteFriendGroup>,
     collapsed_friend_sections: HashSet<FriendSection>,
     resource_row_limit: usize,
     relation_row_limit: usize,
@@ -429,7 +446,10 @@ enum Message {
     OverlayRuleAccentChanged(String),
     OverlayRuleDurationChanged(String),
     OverlayRuleOpacityChanged(String),
+    ToggleOverlayRuleProfilePicture,
+    ToggleOverlayRuleWorldPicture,
     OverlayRuleEveryone,
+    OverlayRuleFavorites,
     ToggleOverlayRuleUser(String),
     SaveScreenOverlayEditor,
     BootFinished(Result<(Vec<SessionAccount>, Option<AuthenticatedSession>), String>),
@@ -449,7 +469,7 @@ enum Message {
     CloseSearchOverlay,
     Refresh,
     ResultsLoaded(Result<Vec<Value>, String>),
-    FavoriteFriendsLoaded(Result<HashSet<String>, String>),
+    FavoriteFriendsLoaded(Result<(HashSet<String>, Vec<FavoriteFriendGroup>), String>),
     ToggleFriendSection(FriendSection),
     ResourceScrolled(f32),
     FriendSidebarScrolled(f32),
@@ -481,7 +501,7 @@ enum Message {
     DetailTabSelected(DetailTab),
     UserRelationsLoaded(Result<UserRelations, String>),
     ThumbnailLoaded(String, Result<Vec<u8>, String>),
-    WorldNameLoaded(String, Result<String, String>),
+    WorldNameLoaded(String, Result<(String, Option<String>), String>),
     SnapshotLoaded(AppSnapshot),
     Synchronize,
     SynchronizeFinished(Result<(), String>),
@@ -544,8 +564,10 @@ impl App {
             thumbnails: HashMap::new(),
             pending_thumbnails: HashSet::new(),
             world_names: HashMap::new(),
+            world_image_urls: HashMap::new(),
             pending_world_names: HashSet::new(),
             favorite_friend_ids: HashSet::new(),
+            favorite_friend_groups: Vec::new(),
             collapsed_friend_sections: HashSet::from([FriendSection::Offline]),
             resource_row_limit: INITIAL_RESOURCE_ROWS,
             relation_row_limit: INITIAL_RELATION_ROWS,
@@ -644,7 +666,13 @@ impl App {
             Message::ReloadScreenOverlay => {
                 let old_window = self.screen_overlay.window_id.take();
                 self.screen_overlay = crate::screen_overlay::ScreenOverlay::load();
-                let _ = self.screen_overlay.ingest(&self.snapshot.recent_events);
+                let _ = self.screen_overlay.ingest(
+                    &self.snapshot.recent_events,
+                    &self.snapshot.friends,
+                    &self.favorite_friend_ids,
+                    &self.world_names,
+                    &self.world_image_urls,
+                );
                 if let Some(rule) = self
                     .screen_overlay
                     .config
@@ -767,6 +795,28 @@ impl App {
                 }
                 Task::none()
             }
+            Message::ToggleOverlayRuleProfilePicture => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.show_profile_picture = !rule.show_profile_picture;
+                }
+                Task::none()
+            }
+            Message::ToggleOverlayRuleWorldPicture => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.show_world_picture = !rule.show_world_picture;
+                }
+                Task::none()
+            }
             Message::OverlayRuleEveryone => {
                 if let Some(rule) = self
                     .screen_overlay
@@ -775,6 +825,19 @@ impl App {
                     .get_mut(&self.overlay_editor_rule)
                 {
                     rule.selected_users.clear();
+                    rule.favorites_only = false;
+                }
+                Task::none()
+            }
+            Message::OverlayRuleFavorites => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.selected_users.clear();
+                    rule.favorites_only = true;
                 }
                 Task::none()
             }
@@ -785,6 +848,7 @@ impl App {
                     .rules
                     .get_mut(&self.overlay_editor_rule)
                 {
+                    rule.favorites_only = false;
                     if rule.selected_users.is_empty() {
                         rule.selected_users.insert(user_id);
                     } else if !rule.selected_users.remove(&user_id) {
@@ -921,6 +985,7 @@ impl App {
                         self.thumbnails.clear();
                         self.pending_thumbnails.clear();
                         self.favorite_friend_ids.clear();
+                        self.favorite_friend_groups.clear();
                         self.two_factor_methods.clear();
                         return Task::batch([
                             self.load_saved_sessions(),
@@ -1011,7 +1076,10 @@ impl App {
             }
             Message::FavoriteFriendsLoaded(result) => {
                 match result {
-                    Ok(ids) => self.favorite_friend_ids = ids,
+                    Ok((ids, groups)) => {
+                        self.favorite_friend_ids = ids;
+                        self.favorite_friend_groups = groups;
+                    }
                     Err(error) => self.error = Some(error),
                 }
                 Task::none()
@@ -1139,6 +1207,7 @@ impl App {
                         self.thumbnails.clear();
                         self.pending_thumbnails.clear();
                         self.favorite_friend_ids.clear();
+                        self.favorite_friend_groups.clear();
                         self.notice = Some(t!("account.session_switched").to_string());
                         return Task::batch([
                             self.load_friend_favorites(),
@@ -1187,6 +1256,7 @@ impl App {
                         self.thumbnails.clear();
                         self.pending_thumbnails.clear();
                         self.favorite_friend_ids.clear();
+                        self.favorite_friend_groups.clear();
                         self.two_factor_methods.clear();
                     }
                     Err(error) => self.error = Some(error),
@@ -1464,8 +1534,14 @@ impl App {
             Message::WorldNameLoaded(world_id, result) => {
                 self.pending_world_names.remove(&world_id);
                 match result {
-                    Ok(name) => {
-                        self.world_names.insert(world_id, name);
+                    Ok((name, image_url)) => {
+                        self.screen_overlay
+                            .resolve_world(&world_id, &name, image_url.as_deref());
+                        self.world_names.insert(world_id.clone(), name);
+                        if let Some(url) = image_url {
+                            self.world_image_urls.insert(world_id, url);
+                        }
+                        return self.load_missing_thumbnails();
                     }
                     Err(error) => {
                         tracing::warn!(world_id, %error, "world name lookup failed");
@@ -1475,7 +1551,13 @@ impl App {
                 Task::none()
             }
             Message::SnapshotLoaded(snapshot) => {
-                let new_toasts = self.screen_overlay.ingest(&snapshot.recent_events);
+                let new_toasts = self.screen_overlay.ingest(
+                    &snapshot.recent_events,
+                    &snapshot.friends,
+                    &self.favorite_friend_ids,
+                    &self.world_names,
+                    &self.world_image_urls,
+                );
                 self.snapshot = snapshot;
                 Task::batch([
                     self.load_missing_thumbnails(),
@@ -1696,7 +1778,7 @@ impl App {
                 }
                 self.selected_item = None;
                 self.selected_detail = None;
-                self.load_page()
+                Task::batch([self.load_page(), self.load_friend_favorites()])
             }
             Message::ClearFeedback => {
                 self.error = None;
@@ -1810,6 +1892,7 @@ impl App {
             )
             .chain(self.visible_friend_thumbnail_urls())
             .chain(self.session_avatar_urls())
+            .chain(self.screen_overlay.image_urls().cloned())
             .collect()
     }
 
@@ -1947,11 +2030,18 @@ impl App {
                         .await
                         .map_err(|error| error.to_string())
                         .and_then(|world| {
-                            world
+                            let name = world
                                 .get("name")
                                 .and_then(Value::as_str)
                                 .map(str::to_string)
-                                .ok_or_else(|| "world response is missing name".to_string())
+                                .ok_or_else(|| "world response is missing name".to_string())?;
+                            let image_url = world
+                                .get("thumbnailImageUrl")
+                                .or_else(|| world.get("imageUrl"))
+                                .and_then(Value::as_str)
+                                .filter(|url| !url.is_empty())
+                                .map(str::to_string);
+                            Ok((name, image_url))
                         })
                 },
                 move |result| Message::WorldNameLoaded(result_id, result),
@@ -2215,7 +2305,22 @@ impl App {
         };
         Task::perform(
             async move {
+                let favorite_groups = backend
+                    .api()
+                    .favorite_groups()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .groups
+                    .into_iter()
+                    .filter(|group| {
+                        matches!(
+                            group.favorite_type,
+                            crate::models::favorite::FavoriteType::Friend
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 let mut ids = HashSet::new();
+                let mut favorites_by_group = HashMap::<String, HashSet<String>>::new();
                 let mut offset = 0;
                 loop {
                     let favorites = backend
@@ -2228,18 +2333,54 @@ impl App {
                         .await
                         .map_err(|error| error.to_string())?;
                     let count = favorites.items.len();
-                    ids.extend(
-                        favorites
-                            .items
-                            .into_iter()
-                            .map(|favorite| favorite.favorite_id),
-                    );
+                    for favorite in favorites.items {
+                        ids.insert(favorite.favorite_id.clone());
+                        for tag in favorite.tags {
+                            favorites_by_group
+                                .entry(tag)
+                                .or_default()
+                                .insert(favorite.favorite_id.clone());
+                        }
+                    }
                     if count < 100 {
                         break;
                     }
                     offset += 100;
                 }
-                Ok(ids)
+                let mut matched_tags = HashSet::new();
+                let mut groups = favorite_groups
+                    .into_iter()
+                    .map(|group| {
+                        let mut friend_ids = HashSet::new();
+                        for (tag, tagged_ids) in &favorites_by_group {
+                            if favorite_group_matches_tag(&group, tag) {
+                                matched_tags.insert(tag.clone());
+                                friend_ids.extend(tagged_ids.iter().cloned());
+                            }
+                        }
+                        FavoriteFriendGroup {
+                            friend_ids,
+                            display_name: if group.display_name.trim().is_empty() {
+                                group.name.clone()
+                            } else {
+                                group.display_name
+                            },
+                            name: group.name,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                groups.extend(
+                    favorites_by_group
+                        .into_iter()
+                        .filter(|(tag, _)| !matched_tags.contains(tag))
+                        .map(|(tag, friend_ids)| FavoriteFriendGroup {
+                            friend_ids,
+                            display_name: tag.clone(),
+                            name: tag,
+                        }),
+                );
+                groups.sort_by(|left, right| left.name.cmp(&right.name));
+                Ok((ids, groups))
             },
             Message::FavoriteFriendsLoaded,
         )
@@ -2257,7 +2398,7 @@ impl App {
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
         if self.screen_overlay.window_id == Some(id) {
-            self.screen_overlay.view()
+            self.screen_overlay.view(&self.thumbnails)
         } else {
             container(self.view())
                 .width(Fill)
@@ -2675,13 +2816,27 @@ impl App {
                 });
             column![
                 text(t!("screen_overlay.people").to_string()).size(13),
-                button(text(t!("screen_overlay.everyone").to_string()).size(12))
-                    .on_press(Message::OverlayRuleEveryone)
-                    .style(if event_rule.selected_users.is_empty() {
-                        button::primary
-                    } else {
-                        button::secondary
-                    }),
+                row![
+                    button(text(t!("screen_overlay.favorites_only").to_string()).size(12))
+                        .on_press(Message::OverlayRuleFavorites)
+                        .style(
+                            if event_rule.favorites_only && event_rule.selected_users.is_empty() {
+                                button::primary
+                            } else {
+                                button::secondary
+                            }
+                        ),
+                    button(text(t!("screen_overlay.everyone").to_string()).size(12))
+                        .on_press(Message::OverlayRuleEveryone)
+                        .style(
+                            if !event_rule.favorites_only && event_rule.selected_users.is_empty() {
+                                button::primary
+                            } else {
+                                button::secondary
+                            }
+                        ),
+                ]
+                .spacing(8),
                 scrollable(friend_rows)
                     .spacing(SCROLLBAR_SPACING)
                     .height(Length::Fixed(130.0)),
@@ -2736,6 +2891,37 @@ impl App {
                 text_input(&opacity_placeholder, &self.overlay_editor_opacity)
                     .on_input(Message::OverlayRuleOpacityChanged)
                     .padding(8),
+            ]
+            .spacing(8),
+            row![
+                button(
+                    text(if event_rule.show_profile_picture {
+                        t!("screen_overlay.profile_picture_on").to_string()
+                    } else {
+                        t!("screen_overlay.profile_picture_off").to_string()
+                    })
+                    .size(12)
+                )
+                .on_press(Message::ToggleOverlayRuleProfilePicture)
+                .style(if event_rule.show_profile_picture {
+                    button::primary
+                } else {
+                    button::secondary
+                }),
+                button(
+                    text(if event_rule.show_world_picture {
+                        t!("screen_overlay.world_picture_on").to_string()
+                    } else {
+                        t!("screen_overlay.world_picture_off").to_string()
+                    })
+                    .size(12)
+                )
+                .on_press(Message::ToggleOverlayRuleWorldPicture)
+                .style(if event_rule.show_world_picture {
+                    button::primary
+                } else {
+                    button::secondary
+                }),
             ]
             .spacing(8),
             people_editor,
@@ -3055,17 +3241,33 @@ impl App {
         let in_vrchat = friends
             .iter()
             .copied()
-            .filter(|friend| friend_is_in_vrchat(friend))
+            .filter(|friend| {
+                !self.favorite_friend_ids.contains(&friend.user_id)
+                    && public_instance_location(friend).is_some()
+            })
+            .collect::<Vec<_>>();
+        let private = friends
+            .iter()
+            .copied()
+            .filter(|friend| {
+                !self.favorite_friend_ids.contains(&friend.user_id)
+                    && friend_is_in_vrchat(friend)
+                    && public_instance_location(friend).is_none()
+            })
             .collect::<Vec<_>>();
         let web = friends
             .iter()
             .copied()
-            .filter(|friend| friend.online && !friend_is_in_vrchat(friend))
+            .filter(|friend| {
+                !self.favorite_friend_ids.contains(&friend.user_id)
+                    && friend.online
+                    && !friend_is_in_vrchat(friend)
+            })
             .collect::<Vec<_>>();
         let favorites = friends
             .iter()
             .copied()
-            .filter(|friend| !friend.online && self.favorite_friend_ids.contains(&friend.user_id))
+            .filter(|friend| self.favorite_friend_ids.contains(&friend.user_id))
             .collect::<Vec<_>>();
         let offline = friends
             .into_iter()
@@ -3073,9 +3275,10 @@ impl App {
             .collect::<Vec<_>>();
 
         let list = [
-            (FriendSection::InVrchat, in_vrchat),
-            (FriendSection::Web, web),
             (FriendSection::Favorites, favorites),
+            (FriendSection::InVrchat, in_vrchat),
+            (FriendSection::Private, private),
+            (FriendSection::Web, web),
             (FriendSection::Offline, offline),
         ]
         .into_iter()
@@ -3086,13 +3289,19 @@ impl App {
                 Space::new().height(0).into()
             } else {
                 let visible = self.friend_section_limit(section).min(count);
-                friends
-                    .into_iter()
-                    .take(visible)
-                    .fold(column![].spacing(3), |rows, friend| {
-                        rows.push(self.friend_sidebar_row(friend))
-                    })
-                    .into()
+                if section == FriendSection::Favorites {
+                    self.favorite_sidebar_rows(friends, visible)
+                } else if section == FriendSection::InVrchat {
+                    self.public_instance_sidebar_rows(friends, visible)
+                } else {
+                    friends
+                        .into_iter()
+                        .take(visible)
+                        .fold(column![].spacing(3), |rows, friend| {
+                            rows.push(self.friend_sidebar_row(friend))
+                        })
+                        .into()
+                }
             };
             column.push(
                 column![
@@ -3140,6 +3349,112 @@ impl App {
         .into()
     }
 
+    fn favorite_sidebar_rows<'a>(
+        &'a self,
+        friends: Vec<&'a crate::store::FriendPresence>,
+        visible: usize,
+    ) -> Element<'a, Message> {
+        let visible_ids = friends
+            .iter()
+            .take(visible)
+            .map(|friend| friend.user_id.clone())
+            .collect::<HashSet<_>>();
+        let grouped_ids = self
+            .favorite_friend_groups
+            .iter()
+            .flat_map(|group| group.friend_ids.iter().cloned())
+            .collect::<HashSet<_>>();
+        let mut rows = column![].spacing(5);
+        for group in &self.favorite_friend_groups {
+            let group_members = friends
+                .iter()
+                .copied()
+                .filter(|friend| group.friend_ids.contains(&friend.user_id))
+                .collect::<Vec<_>>();
+            let count = group_members.len();
+            let members = group_members
+                .into_iter()
+                .filter(|friend| visible_ids.contains(&friend.user_id))
+                .collect::<Vec<_>>();
+            rows = rows.push(
+                row![
+                    text(group.display_name.clone()).size(10),
+                    Space::new().width(Fill),
+                    text(count.to_string()).size(9)
+                ]
+                .padding([2, 4]),
+            );
+            rows = members.into_iter().fold(rows, |rows, friend| {
+                rows.push(self.friend_sidebar_row(friend))
+            });
+        }
+        let ungrouped_friends = friends
+            .into_iter()
+            .filter(|friend| !grouped_ids.contains(&friend.user_id))
+            .collect::<Vec<_>>();
+        let ungrouped_count = ungrouped_friends.len();
+        let ungrouped = ungrouped_friends
+            .into_iter()
+            .filter(|friend| visible_ids.contains(&friend.user_id))
+            .collect::<Vec<_>>();
+        if !ungrouped.is_empty() {
+            rows = rows.push(
+                row![
+                    text(t!("friends.ungrouped_favorites").to_string()).size(10),
+                    Space::new().width(Fill),
+                    text(ungrouped_count.to_string()).size(9)
+                ]
+                .padding([2, 4]),
+            );
+            rows = ungrouped.into_iter().fold(rows, |rows, friend| {
+                rows.push(self.friend_sidebar_row(friend))
+            });
+        }
+        rows.into()
+    }
+
+    fn public_instance_sidebar_rows<'a>(
+        &'a self,
+        friends: Vec<&'a crate::store::FriendPresence>,
+        visible: usize,
+    ) -> Element<'a, Message> {
+        let visible_ids = friends
+            .iter()
+            .take(visible)
+            .map(|friend| friend.user_id.clone())
+            .collect::<HashSet<_>>();
+        let mut instances = BTreeMap::<String, Vec<&crate::store::FriendPresence>>::new();
+        for friend in friends {
+            if let Some(location) = public_instance_location(friend) {
+                instances
+                    .entry(public_instance_key(location).to_string())
+                    .or_default()
+                    .push(friend);
+            }
+        }
+        instances
+            .into_iter()
+            .fold(column![].spacing(5), |rows, (location, members)| {
+                let count = members.len();
+                let visible_members = members
+                    .into_iter()
+                    .filter(|friend| visible_ids.contains(&friend.user_id))
+                    .collect::<Vec<_>>();
+                let rows = rows.push(
+                    row![
+                        text(public_instance_label(&location, &self.world_names)).size(10),
+                        Space::new().width(Fill),
+                        text(count.to_string()).size(9)
+                    ]
+                    .padding([2, 4]),
+                );
+                visible_members.into_iter().fold(rows, |rows, friend| {
+                    rows.push(self.friend_sidebar_row(friend))
+                })
+            })
+            .into()
+    }
+
     fn friend_sidebar_row<'a>(
         &'a self,
         friend: &'a crate::store::FriendPresence,
@@ -3148,8 +3463,8 @@ impl App {
         let hovered = self.hovered_item.as_deref() == Some(hover_id.as_str());
         let status = friend_status(friend.status.as_deref(), friend.online);
         let location: Element<'a, Message> =
-            if let Some(location) = friend_location(friend, &self.world_names) {
-                text(location).size(10).into()
+            if let Some(summary) = friend_secondary_text(friend, &self.world_names) {
+                text(summary).size(10).into()
             } else {
                 Space::new().height(0).into()
             };
@@ -3372,48 +3687,108 @@ impl App {
                     .to_lowercase(),
             )
         });
-        let favorites = friends
+        let mut sections = self
+            .favorite_friend_groups
             .iter()
-            .copied()
-            .filter(|friend| self.favorite_friend_ids.contains(&friend.user_id))
+            .map(|group| {
+                (
+                    group.display_name.clone(),
+                    friends
+                        .iter()
+                        .copied()
+                        .filter(|friend| group.friend_ids.contains(&friend.user_id))
+                        .collect::<Vec<_>>(),
+                )
+            })
             .collect::<Vec<_>>();
-        let online = friends
+        let grouped_favorite_ids = self
+            .favorite_friend_groups
+            .iter()
+            .flat_map(|group| group.friend_ids.iter().cloned())
+            .collect::<HashSet<_>>();
+        let ungrouped_favorites = friends
             .iter()
             .copied()
-            .filter(|friend| friend.online && !self.favorite_friend_ids.contains(&friend.user_id))
+            .filter(|friend| {
+                self.favorite_friend_ids.contains(&friend.user_id)
+                    && !grouped_favorite_ids.contains(&friend.user_id)
+            })
+            .collect::<Vec<_>>();
+        if !ungrouped_favorites.is_empty() {
+            sections.push((
+                t!("friends.ungrouped_favorites").to_string(),
+                ungrouped_favorites,
+            ));
+        }
+        let mut public_instances = BTreeMap::<String, Vec<&crate::store::FriendPresence>>::new();
+        for friend in friends
+            .iter()
+            .copied()
+            .filter(|friend| !self.favorite_friend_ids.contains(&friend.user_id))
+        {
+            if let Some(location) = public_instance_location(friend) {
+                public_instances
+                    .entry(public_instance_key(location).to_string())
+                    .or_default()
+                    .push(friend);
+            }
+        }
+        sections.extend(public_instances.into_iter().map(|(location, members)| {
+            (public_instance_label(&location, &self.world_names), members)
+        }));
+        let private = friends
+            .iter()
+            .copied()
+            .filter(|friend| {
+                !self.favorite_friend_ids.contains(&friend.user_id)
+                    && friend.online
+                    && friend_is_in_vrchat(friend)
+                    && public_instance_location(friend).is_none()
+            })
+            .collect::<Vec<_>>();
+        let web = friends
+            .iter()
+            .copied()
+            .filter(|friend| {
+                !self.favorite_friend_ids.contains(&friend.user_id)
+                    && friend.online
+                    && !friend_is_in_vrchat(friend)
+            })
             .collect::<Vec<_>>();
         let offline = friends
             .into_iter()
             .filter(|friend| !friend.online && !self.favorite_friend_ids.contains(&friend.user_id))
             .collect::<Vec<_>>();
 
-        let list = [
-            (t!("friends.favorite_friends").to_string(), favorites),
-            (t!("friends.online").to_string(), online),
+        sections.extend([
+            (t!("friends.sections.private").to_string(), private),
+            (t!("friends.sections.web").to_string(), web),
             (t!("friends.offline").to_string(), offline),
-        ]
-        .into_iter()
-        .fold(column![].spacing(8), |column, (label, friends)| {
-            let count = friends.len();
-            let rows = friends
-                .into_iter()
-                .fold(column![].spacing(6), |rows, friend| {
-                    rows.push(self.friend_row(friend))
-                });
-            column.push(
-                column![
-                    row![
-                        text(label).size(13),
-                        text(count.to_string()).size(11),
-                        rule::horizontal(1)
+        ]);
+
+        let list = sections
+            .into_iter()
+            .fold(column![].spacing(8), |column, (label, friends)| {
+                let count = friends.len();
+                let rows = friends
+                    .into_iter()
+                    .fold(column![].spacing(6), |rows, friend| {
+                        rows.push(self.friend_row(friend))
+                    });
+                column.push(
+                    column![
+                        row![
+                            text(label).size(13),
+                            text(count.to_string()).size(11),
+                            rule::horizontal(1)
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Center),
+                        rows
                     ]
-                    .spacing(8)
-                    .align_y(iced::Center),
-                    rows
-                ]
-                .spacing(7),
-            )
-        });
+                    .spacing(7),
+                )
+            });
         scrollable(list).spacing(SCROLLBAR_SPACING).into()
     }
 
@@ -3423,8 +3798,8 @@ impl App {
         let status = friend_status(friend.status.as_deref(), friend.online);
         let traveling = friend.traveling_to_location.is_some();
         let location: Element<'a, Message> =
-            if let Some(location) = friend_location(friend, &self.world_names) {
-                text(location).size(12).into()
+            if let Some(summary) = friend_secondary_text(friend, &self.world_names) {
+                text(summary).size(12).into()
             } else {
                 Space::new().height(0).into()
             };
@@ -3495,63 +3870,16 @@ impl App {
     }
 
     fn resource_list(&self) -> Element<'_, Message> {
+        if self.page == Page::Favorites {
+            return self.favorite_resource_list();
+        }
         let list = self
             .results
             .iter()
             .enumerate()
             .take(self.resource_row_limit.min(self.results.len()))
             .fold(column![].spacing(6), |column, (index, item)| {
-                let hover_id = format!("resource:{}:{}", self.page.label(), item.id);
-                let hovered = self.hovered_item.as_deref() == Some(hover_id.as_str());
-                let badges = item.badges.iter().fold(row![].spacing(6), |row, badge| {
-                    row.push(
-                        container(text(badge).size(10))
-                            .padding([3, 6])
-                            .style(container::bordered_box),
-                    )
-                });
-                column.push(
-                    mouse_area(
-                        container(
-                            row![
-                                self.thumbnail(item, 58.0),
-                                if self.page == Page::Users {
-                                    status_dot(user_status_from_value(&item.raw))
-                                } else {
-                                    Space::new()
-                                        .width(Length::Fixed(10.0))
-                                        .height(Length::Fixed(10.0))
-                                        .into()
-                                },
-                                column![
-                                    row![
-                                        text(&item.title).size(14),
-                                        if self.page == Page::Users && is_traveling(&item.raw) {
-                                            text("🧳").size(14)
-                                        } else {
-                                            text("").size(14)
-                                        },
-                                        Space::new().width(Fill),
-                                        text(&item.id).size(11)
-                                    ],
-                                    text(&item.subtitle).size(12),
-                                    badges
-                                ]
-                                .spacing(4)
-                                .width(Fill)
-                            ]
-                            .spacing(12)
-                            .align_y(iced::Center),
-                        )
-                        .padding(10)
-                        .width(Fill)
-                        .style(item_card_style(item, hovered)),
-                    )
-                    .on_press(Message::OpenItem(index))
-                    .on_enter(Message::HoverItem(Some(hover_id)))
-                    .on_exit(Message::HoverItem(None))
-                    .interaction(mouse::Interaction::Pointer),
-                )
+                column.push(self.resource_card(index, item))
             });
 
         column![
@@ -3565,6 +3893,109 @@ impl App {
                 .on_scroll(|viewport| { Message::ResourceScrolled(viewport.relative_offset().y) })
         ]
         .spacing(10)
+        .into()
+    }
+
+    fn favorite_resource_list(&self) -> Element<'_, Message> {
+        let mut groups = BTreeMap::<String, Vec<(usize, &ResultItem)>>::new();
+        for (index, item) in self
+            .results
+            .iter()
+            .enumerate()
+            .take(self.resource_row_limit.min(self.results.len()))
+        {
+            for label in favorite_group_labels(&item.raw) {
+                groups.entry(label).or_default().push((index, item));
+            }
+        }
+        let list = groups
+            .into_iter()
+            .fold(column![].spacing(12), |column, (label, mut items)| {
+                items.sort_by_key(|(_, item)| item.title.to_lowercase());
+                let count = items.len();
+                let rows = items
+                    .into_iter()
+                    .fold(column![].spacing(6), |rows, (index, item)| {
+                        rows.push(self.resource_card(index, item))
+                    });
+                column.push(
+                    column![
+                        row![
+                            text(label).size(14),
+                            text(count.to_string()).size(11),
+                            rule::horizontal(1)
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Center),
+                        rows
+                    ]
+                    .spacing(7),
+                )
+            });
+        column![
+            if self.loading {
+                text(t!("status.loading").to_string()).size(12)
+            } else {
+                text(t!("status.results", count = self.results.len()).to_string()).size(12)
+            },
+            scrollable(list)
+                .spacing(SCROLLBAR_SPACING)
+                .on_scroll(|viewport| Message::ResourceScrolled(viewport.relative_offset().y))
+        ]
+        .spacing(10)
+        .into()
+    }
+
+    fn resource_card<'a>(&'a self, index: usize, item: &'a ResultItem) -> Element<'a, Message> {
+        let hover_id = format!("resource:{}:{}", self.page.label(), item.id);
+        let hovered = self.hovered_item.as_deref() == Some(hover_id.as_str());
+        let badges = item.badges.iter().fold(row![].spacing(6), |row, badge| {
+            row.push(
+                container(text(badge).size(10))
+                    .padding([3, 6])
+                    .style(container::bordered_box),
+            )
+        });
+        mouse_area(
+            container(
+                row![
+                    self.thumbnail(item, 58.0),
+                    if self.page == Page::Users {
+                        status_dot(user_status_from_value(&item.raw))
+                    } else {
+                        Space::new()
+                            .width(Length::Fixed(10.0))
+                            .height(Length::Fixed(10.0))
+                            .into()
+                    },
+                    column![
+                        row![
+                            text(&item.title).size(14),
+                            if self.page == Page::Users && is_traveling(&item.raw) {
+                                text("🧳").size(14)
+                            } else {
+                                text("").size(14)
+                            },
+                            Space::new().width(Fill),
+                            text(&item.id).size(11)
+                        ],
+                        text(&item.subtitle).size(12),
+                        badges
+                    ]
+                    .spacing(4)
+                    .width(Fill)
+                ]
+                .spacing(12)
+                .align_y(iced::Center),
+            )
+            .padding(10)
+            .width(Fill)
+            .style(item_card_style(item, hovered)),
+        )
+        .on_press(Message::OpenItem(index))
+        .on_enter(Message::HoverItem(Some(hover_id)))
+        .on_exit(Message::HoverItem(None))
+        .interaction(mouse::Interaction::Pointer)
         .into()
     }
 
@@ -4002,20 +4433,36 @@ async fn load_favorite_resources(
     backend: Arc<Backend>,
     tag: Option<String>,
 ) -> Result<Vec<Value>, String> {
-    let favorites = backend
+    let groups = backend
         .api()
-        .favorites(&FavoritesQuery {
-            page: PaginationQuery::new().limit(RESOURCE_PAGE_LIMIT),
-            r#type: None,
-            tag,
-        })
+        .favorite_groups()
         .await
         .map_err(|error| error.to_string())?
-        .items;
+        .groups;
+    let mut favorites = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = backend
+            .api()
+            .favorites(&FavoritesQuery {
+                page: PaginationQuery::new().limit(100).offset(offset),
+                r#type: None,
+                tag: tag.clone(),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let count = page.items.len();
+        favorites.extend(page.items);
+        if count < 100 {
+            break;
+        }
+        offset += 100;
+    }
 
     Ok(stream::iter(favorites)
         .map(|favorite| {
             let backend = backend.clone();
+            let groups = groups.clone();
             async move {
                 let resource_path = match &favorite.favorite_type {
                     crate::models::favorite::FavoriteType::Friend => {
@@ -4066,11 +4513,16 @@ async fn load_favorite_resources(
                     );
                     object.insert(
                         "_favoriteType".to_string(),
-                        serde_json::to_value(&favorite.favorite_type).unwrap_or(Value::Null),
+                        serde_json::to_value(favorite.favorite_type).unwrap_or(Value::Null),
                     );
                     object.insert(
                         "_favoriteTags".to_string(),
                         serde_json::to_value(&favorite.tags).unwrap_or(Value::Null),
+                    );
+                    let favorite_groups = favorite_display_groups(&favorite, &groups);
+                    object.insert(
+                        "_favoriteGroups".to_string(),
+                        serde_json::to_value(favorite_groups).unwrap_or(Value::Null),
                     );
                 }
                 resource
@@ -4184,6 +4636,61 @@ fn normalize_group_value(mut value: Value) -> Value {
         }
     }
     value
+}
+
+fn favorite_group_labels(value: &Value) -> Vec<String> {
+    let kind = match value.get("_favoriteType").and_then(Value::as_str) {
+        Some("friend") => t!("pages.friends").to_string(),
+        Some("world") => t!("pages.worlds").to_string(),
+        Some("avatar") => t!("pages.avatars").to_string(),
+        _ => t!("pages.favorites").to_string(),
+    };
+    let labels = value
+        .get("_favoriteGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|label| !label.trim().is_empty())
+        .map(|label| format!("{kind} · {label}"))
+        .collect::<Vec<_>>();
+    if !labels.is_empty() {
+        return labels;
+    }
+    vec![t!("favorites.fallback_group", kind = kind).to_string()]
+}
+
+fn favorite_group_matches_tag(group: &crate::models::favorite::FavoriteGroup, tag: &str) -> bool {
+    group.name == tag || group.tags.iter().any(|group_tag| group_tag == tag)
+}
+
+fn favorite_display_groups(
+    favorite: &crate::models::favorite::Favorite,
+    groups: &[crate::models::favorite::FavoriteGroup],
+) -> Vec<String> {
+    let mut seen_labels = HashSet::new();
+    favorite
+        .tags
+        .iter()
+        .filter(|tag| !tag.trim().is_empty())
+        .filter_map(|tag| {
+            let label = groups
+                .iter()
+                .find(|group| {
+                    group.favorite_type == favorite.favorite_type
+                        && favorite_group_matches_tag(group, tag)
+                })
+                .map(|group| {
+                    if group.display_name.trim().is_empty() {
+                        group.name.clone()
+                    } else {
+                        group.display_name.clone()
+                    }
+                })
+                .unwrap_or_else(|| tag.clone());
+            seen_labels.insert(label.clone()).then_some(label)
+        })
+        .collect()
 }
 
 fn pipeline_event_summary(
@@ -4332,6 +4839,69 @@ fn friend_location(
         .map(|location| location_label(location, world_names))
 }
 
+fn friend_secondary_text(
+    friend: &crate::store::FriendPresence,
+    world_names: &HashMap<String, String>,
+) -> Option<String> {
+    friend
+        .status_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+        .map(str::to_string)
+        .or_else(|| friend_location(friend, world_names))
+}
+
+fn friend_instance_location(friend: &crate::store::FriendPresence) -> Option<&str> {
+    friend
+        .traveling_to_location
+        .as_deref()
+        .or(friend.location.as_deref())
+        .filter(|location| !location.is_empty() && *location != "offline")
+}
+
+fn public_instance_location(friend: &crate::store::FriendPresence) -> Option<&str> {
+    if !friend.online {
+        return None;
+    }
+    let location = friend_instance_location(friend)?;
+    if !location.starts_with("wrld_")
+        || [
+            "~private(",
+            "~friends(",
+            "~hidden(",
+            "~invite(",
+            "~invite+(",
+            "~group(",
+        ]
+        .iter()
+        .any(|marker| location.contains(marker))
+    {
+        return None;
+    }
+    Some(location)
+}
+
+fn public_instance_label(location: &str, world_names: &HashMap<String, String>) -> String {
+    let world_id = world_id_from_location(location).unwrap_or(location);
+    let world = world_names
+        .get(world_id)
+        .map(String::as_str)
+        .unwrap_or(world_id);
+    let instance = location
+        .split_once(':')
+        .map(|(_, instance)| instance.split('~').next().unwrap_or(instance))
+        .filter(|instance| !instance.is_empty());
+    instance.map_or_else(
+        || world.to_string(),
+        |instance| format!("{world} · {instance}"),
+    )
+}
+
+fn public_instance_key(location: &str) -> &str {
+    location.split('~').next().unwrap_or(location)
+}
+
 fn friend_is_in_vrchat(friend: &crate::store::FriendPresence) -> bool {
     friend
         .traveling_to_location
@@ -4344,12 +4914,14 @@ fn friend_section(
     friend: &crate::store::FriendPresence,
     favorite_friend_ids: &HashSet<String>,
 ) -> FriendSection {
-    if friend_is_in_vrchat(friend) {
+    if favorite_friend_ids.contains(&friend.user_id) {
+        FriendSection::Favorites
+    } else if public_instance_location(friend).is_some() {
         FriendSection::InVrchat
+    } else if friend_is_in_vrchat(friend) {
+        FriendSection::Private
     } else if friend.online {
         FriendSection::Web
-    } else if favorite_friend_ids.contains(&friend.user_id) {
-        FriendSection::Favorites
     } else {
         FriendSection::Offline
     }
@@ -4575,6 +5147,7 @@ fn friend_result_item(friend: &crate::store::FriendPresence) -> ResultItem {
         "id": friend.user_id,
         "displayName": friend.display_name,
         "status": friend.status,
+        "statusDescription": friend.status_description,
         "isFriend": true,
         "location": friend.location,
         "travelingToLocation": friend.traveling_to_location,
@@ -4586,9 +5159,7 @@ fn friend_result_item(friend: &crate::store::FriendPresence) -> ResultItem {
             .display_name
             .clone()
             .unwrap_or_else(|| friend.user_id.clone()),
-        subtitle: friend
-            .location
-            .clone()
+        subtitle: friend_secondary_text(friend, &HashMap::new())
             .unwrap_or_else(|| "Offline".to_string()),
         thumbnail_url: friend.avatar_url.clone(),
         round_thumbnail: true,
@@ -5177,12 +5748,70 @@ fn resource_action(page: Page) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AvatarPerformance, PresenceStatus, compact_json, friend_status, is_traveling,
-        pipeline_event_summary, resource_avatar_performance, resource_badges, resource_trust_rank,
-        user_status_from_value,
+        AvatarPerformance, PresenceStatus, compact_json, favorite_display_groups,
+        friend_secondary_text, friend_status, is_traveling, pipeline_event_summary,
+        public_instance_location, resource_avatar_performance, resource_badges,
+        resource_trust_rank, user_status_from_value,
     };
+    use crate::models::favorite::{Favorite, FavoriteGroup, FavoriteType};
+    use crate::store::FriendPresence;
     use crate::websocket::{PipelineEvent, event::FriendOnlineContent};
     use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn favorite_tags_create_distinct_categories_even_without_matching_metadata() {
+        let groups = vec![FavoriteGroup {
+            id: "fvgrp_1".to_string(),
+            name: "custom-internal-name".to_string(),
+            display_name: "Proches".to_string(),
+            owner_id: "usr_1".to_string(),
+            owner_display_name: String::new(),
+            favorite_type: FavoriteType::Friend,
+            visibility: "private".to_string(),
+            tags: vec!["group_0".to_string()],
+        }];
+        let first = Favorite {
+            id: "fvrt_1".to_string(),
+            favorite_id: "usr_2".to_string(),
+            favorite_type: FavoriteType::Friend,
+            tags: vec!["group_0".to_string()],
+        };
+        let second = Favorite {
+            id: "fvrt_2".to_string(),
+            favorite_id: "usr_3".to_string(),
+            favorite_type: FavoriteType::Friend,
+            tags: vec!["group_1".to_string()],
+        };
+
+        assert_eq!(favorite_display_groups(&first, &groups), vec!["Proches"]);
+        assert_eq!(favorite_display_groups(&second, &groups), vec!["group_1"]);
+    }
+
+    #[test]
+    fn separates_public_instances_and_prefers_custom_status_text() {
+        let public = FriendPresence {
+            online: true,
+            location: Some("wrld_1:123~region(eu)".to_string()),
+            status_description: Some("Je construis un avatar".to_string()),
+            ..FriendPresence::default()
+        };
+        assert_eq!(
+            public_instance_location(&public),
+            Some("wrld_1:123~region(eu)")
+        );
+        assert_eq!(
+            friend_secondary_text(&public, &HashMap::new()).as_deref(),
+            Some("Je construis un avatar")
+        );
+
+        let private = FriendPresence {
+            online: true,
+            location: Some("wrld_1:123~private(usr_1)".to_string()),
+            ..FriendPresence::default()
+        };
+        assert!(public_instance_location(&private).is_none());
+    }
 
     #[test]
     fn activity_summary_does_not_expose_profile_payload() {

@@ -31,6 +31,7 @@ pub struct FriendPresence {
     pub user_id: String,
     pub display_name: Option<String>,
     pub status: Option<String>,
+    pub status_description: Option<String>,
     pub avatar_url: Option<String>,
     pub trust_rank: Option<String>,
     pub online: bool,

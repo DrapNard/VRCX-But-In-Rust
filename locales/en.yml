@@ -53,11 +53,13 @@ detail:
     overview: "Overview"
 friends:
   favorite_friends: "Favorite friends"
+  ungrouped_favorites: "Ungrouped favorites"
   offline: "Offline"
   online: "Online"
   sections:
     favorites: "Favorites"
-    in_vrchat: "In VRChat"
+    in_vrchat: "Public instances"
+    private: "Private instances"
     offline: "Offline"
     web: "Online on web"
 nav:
@@ -91,6 +93,8 @@ pages:
   users: "Users"
   worlds: "Worlds"
   vr_overlay: "VR Overlay"
+favorites:
+  fallback_group: "Other %{kind}"
 search:
   filters: "Search filters"
   global: "Global search"
@@ -115,8 +119,11 @@ screen_overlay:
   enable: "Enable overlay"
   enable_event: "Enable event"
   everyone: "Everyone"
+  favorites_only: "Favorites only"
   opacity: "Opacity from 0.15 to 1"
   people: "Selected people"
+  profile_picture_off: "Profile picture hidden"
+  profile_picture_on: "Profile picture shown"
   performance_hint: "No polling or continuous animation: the transparent window only exists while a notification is visible."
   reload: "Reload configuration"
   reloaded: "Screen notification configuration reloaded."
@@ -125,6 +132,8 @@ screen_overlay:
   test: "Test notification"
   title: "Screen notifications"
   title_template: "Notification title"
+  world_picture_off: "World picture hidden"
+  world_picture_on: "World picture shown"
 status:
   loading: "Loading..."
   no_items: "No items"

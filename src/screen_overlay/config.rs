@@ -60,12 +60,13 @@ impl Default for ScreenOverlayConfig {
             "friend-add",
             "friend-delete",
             "instance-queue-joined",
+            "user-location",
         ] {
             rules.insert(event.into(), EventRule::default());
         }
 
         Self {
-            enabled: true,
+            enabled: false,
             width: 380,
             margin: 18,
             spacing: 8,
@@ -83,11 +84,15 @@ impl Default for ScreenOverlayConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct EventRule {
     pub enabled: bool,
-    /// Empty means every user. IDs are preferred over display names.
+    /// Explicit selection. When empty, `favorites_only` chooses favorites or everyone.
     pub selected_users: BTreeSet<String>,
+    /// Used when `selected_users` is empty. Non-user events ignore this filter.
+    pub favorites_only: bool,
     pub title: String,
     pub body: String,
     pub accent: String,
+    pub show_profile_picture: bool,
+    pub show_world_picture: bool,
     /// `None` uses `default_duration_seconds`.
     pub duration_seconds: Option<f32>,
     /// `None` uses `default_opacity`.
@@ -99,9 +104,12 @@ impl Default for EventRule {
         Self {
             enabled: false,
             selected_users: BTreeSet::new(),
+            favorites_only: true,
             title: "{event}".into(),
             body: "{message}".into(),
             accent: "#6C8CFF".into(),
+            show_profile_picture: true,
+            show_world_picture: true,
             duration_seconds: None,
             opacity: None,
         }

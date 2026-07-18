@@ -63,6 +63,35 @@ impl VrcClient {
         send_json(self.http().put(url).json(body), reqwest::Method::PUT, path).await
     }
 
+    pub async fn put_empty<B>(&self, path: &str, body: &B) -> Result<(), VrcError>
+    where
+        B: Serialize + ?Sized,
+    {
+        let started = Instant::now();
+        tracing::debug!(method = "PUT", path, "HTTP request");
+        let response = self
+            .http()
+            .put(self.endpoint(path)?)
+            .json(body)
+            .send()
+            .await
+            .map_err(VrcError::Network)?;
+        let status = response.status();
+        tracing::debug!(
+            method = "PUT",
+            path,
+            %status,
+            elapsed_ms = started.elapsed().as_millis(),
+            "HTTP response"
+        );
+        if status.is_success() {
+            Ok(())
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            Err(VrcError::Api { status, body })
+        }
+    }
+
     pub async fn patch_json<T, B>(&self, path: &str, body: &B) -> Result<T, VrcError>
     where
         T: DeserializeOwned,

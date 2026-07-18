@@ -37,6 +37,8 @@ pub struct FavoriteGroup {
     pub name: String,
     pub display_name: String,
     pub owner_id: String,
+    #[serde(default)]
+    pub owner_display_name: String,
     #[serde(rename = "type", alias = "favoriteType")]
     pub favorite_type: FavoriteType,
     pub visibility: String,

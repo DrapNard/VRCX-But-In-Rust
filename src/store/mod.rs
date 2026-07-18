@@ -67,6 +67,7 @@ impl AppStore {
                 user_id: friend.id.clone(),
                 display_name: Some(friend.display_name.clone()),
                 status: friend.status.clone(),
+                status_description: friend.status_description.clone(),
                 avatar_url: friend_avatar_url(&friend),
                 trust_rank: trust_rank_from_tags(&friend.tags),
                 online: friend

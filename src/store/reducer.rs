@@ -294,6 +294,7 @@ fn presence_from_friend(friend: &Friend) -> FriendPresence {
         user_id: friend.id.clone(),
         display_name: Some(friend.display_name.clone()),
         status: friend.status.clone(),
+        status_description: friend.status_description.clone(),
         avatar_url: super::friend_avatar_url(friend),
         trust_rank: trust_rank_from_tags(&friend.tags),
         online: friend
@@ -323,6 +324,9 @@ fn apply_user_fields(presence: &mut FriendPresence, user: &Value) {
     }
     if let Some(status) = user.get("status").and_then(Value::as_str) {
         presence.status = Some(status.to_string());
+    }
+    if let Some(status_description) = user.get("statusDescription").and_then(Value::as_str) {
+        presence.status_description = non_empty(status_description);
     }
     presence.avatar_url = [
         "userIcon",
@@ -416,7 +420,11 @@ mod tests {
                 platform: "standalonewindows".to_string(),
                 location: "private".to_string(),
                 can_request_invite: true,
-                user: json!({"id": "usr_1", "displayName": "Ada"}),
+                user: json!({
+                    "id": "usr_1",
+                    "displayName": "Ada",
+                    "statusDescription": "Building an avatar"
+                }),
             }))
             .await
             .unwrap();
@@ -435,6 +443,10 @@ mod tests {
         let presence = store.snapshot().await.friends["usr_1"].clone();
         assert!(presence.online);
         assert_eq!(presence.display_name.as_deref(), Some("Ada"));
+        assert_eq!(
+            presence.status_description.as_deref(),
+            Some("Building an avatar")
+        );
         assert_eq!(presence.world_id.as_deref(), Some("wrld_1"));
 
         store
