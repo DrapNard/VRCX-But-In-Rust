@@ -150,6 +150,33 @@ For release builds:
 ```shell
 cargo build --release
 ```
+
+Optional VR module (nothing is included in the default build):
+```shell
+# XSOverlay notifications only
+cargo build --release --features vr-notifications-xs
+
+# Wrist overlay model for a SteamVR renderer
+cargo build --release --features vr-wrist-steamvr
+
+# Wrist overlay model for a WayVR renderer
+cargo build --release --features vr-wrist-wayvr
+```
+
+The VR module is configured with JSON through `vr_overlay::load_config`. Notification
+categories, appearance, audio, opacity and targets are configurable. The wrist model exposes
+the essential clock, instance, friends, notifications and connection sections by default, plus
+custom data and a replaceable renderer for runtime-specific integrations.
+
+`vr-wrist-steamvr` connects to `IVROverlay`, anchors the surface to the configured controller
+and submits RGBA8 frames to SteamVR's compositor. It is available on Windows and Linux.
+`vr-wrist-wayvr` dynamically probes the active OpenXR loader for `XR_EXTX_overlay`. When that
+provisional extension is absent, the application reports WayVR as the required compositor bridge;
+a standard OpenXR quad layer cannot overlay a different application's session.
+
+Platform matrix: macOS builds contain no VR module or VR runtime dependency, regardless of the
+requested feature flags. Windows builds contain the OpenVR/SteamVR path but exclude WayVR and
+OpenXR. Linux builds may contain both paths.
 Development Commands
 
 Format code:

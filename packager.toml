@@ -1,5 +1,5 @@
 name = "vrcx-but-in-rust"
-product-name = "VRCX But In Rust"
+product-name = "VRCX - BIR"
 identifier = "com.drapnard.vrcxbir"
 version = "0.1.0"
 authors = ["DrapNard"]

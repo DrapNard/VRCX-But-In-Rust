@@ -8,7 +8,12 @@ mod models;
 mod session;
 mod store;
 mod ui;
+// VR is intentionally absent from every macOS build, even when a VR feature is requested.
+#[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+mod vr_overlay;
 mod websocket;
+
+rust_i18n::i18n!("locales");
 
 pub fn main() -> iced::Result {
     tracing_subscriber::fmt()

@@ -12,8 +12,8 @@ use crate::{
     error::VrcError,
     models::users::User,
     session::auth::{
-        Auth, AuthError, LoginResult, LogoutResult, RestoreSessionResult, TwoFactorMethod,
-        VerifyTwoFactorResult,
+        Auth, AuthError, LoginResult, LogoutResult, RestoreSessionResult, SavedSession,
+        TwoFactorMethod, VerifyTwoFactorResult,
     },
     store::{AppSnapshot, AppStore, CacheConfig, SessionMetadata, StoreError, WebSocketStatus},
     websocket::{PipelineClient, PipelineError, PipelineMessage},
@@ -56,6 +56,15 @@ impl BackendConfig {
 pub struct AuthenticatedSession {
     pub user_id: String,
     pub display_name: String,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionAccount {
+    pub user_id: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +152,13 @@ impl Backend {
         self.store.subscribe()
     }
 
+    pub fn saved_sessions(&self) -> Result<Vec<SessionAccount>, BackendError> {
+        self.auth
+            .saved_sessions()
+            .map(|sessions| sessions.into_iter().map(SessionAccount::from).collect())
+            .map_err(auth_error)
+    }
+
     pub async fn restore_session(&self) -> Result<Option<AuthenticatedSession>, BackendError> {
         match self.auth.restore_session().await {
             RestoreSessionResult::Success(user) => {
@@ -226,6 +242,36 @@ impl Backend {
                 Err(BackendError::Auth("invalid two-factor URL".to_string()))
             }
         }
+    }
+
+    pub async fn switch_session(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<AuthenticatedSession>, BackendError> {
+        self.stop_websocket().await?;
+        match self
+            .auth
+            .switch_session(user_id)
+            .await
+            .map_err(auth_error)?
+        {
+            Some(user) => {
+                let session = session_from_user(&user);
+                self.activate_session(user).await?;
+                let _ = self
+                    .events
+                    .send(BackendEvent::SessionRestored(session.clone()));
+                Ok(Some(session))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn begin_new_session(&self) -> Result<(), BackendError> {
+        self.stop_websocket().await?;
+        self.auth.clear_runtime_session();
+        self.store.clear_session().await?;
+        Ok(())
     }
 
     pub async fn synchronize(&self) -> Result<(), BackendError> {
@@ -585,7 +631,32 @@ fn session_from_user(user: &User) -> AuthenticatedSession {
     AuthenticatedSession {
         user_id: user.identity.id.clone(),
         display_name: user.identity.display_name.clone(),
+        avatar_url: user_avatar_url(user),
     }
+}
+
+impl From<SavedSession> for SessionAccount {
+    fn from(session: SavedSession) -> Self {
+        Self {
+            user_id: session.user_id,
+            display_name: session.display_name,
+            avatar_url: session.avatar_url,
+            active: session.active,
+        }
+    }
+}
+
+fn user_avatar_url(user: &User) -> Option<String> {
+    [
+        user.profile.user_icon.as_str(),
+        user.profile.profile_pic_override_thumbnail.as_str(),
+        user.profile.profile_pic_override.as_str(),
+        user.profile.current_avatar_thumbnail_image_url.as_str(),
+        user.profile.current_avatar_image_url.as_str(),
+    ]
+    .into_iter()
+    .find(|url| !url.trim().is_empty())
+    .map(str::to_string)
 }
 
 fn auth_error(error: AuthError) -> BackendError {

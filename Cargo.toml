@@ -11,6 +11,16 @@ readme = "README.md"
 keywords = ["vrchat", "desktop", "iced", "companion"]
 categories = ["gui"]
 
+[features]
+default = []
+# VR support is deliberately opt-in: a normal build contains none of this module.
+vr-overlay = []
+vr-notifications-xs = ["vr-overlay"]
+vr-notifications-ovr-toolkit = ["vr-overlay"]
+vr-wrist = ["vr-overlay"]
+vr-wrist-steamvr = ["vr-wrist", "dep:openvr"]
+vr-wrist-wayvr = ["vr-wrist", "dep:openxr"]
+
 [dependencies]
 futures-util = "0.3.32"
 iced = { version = "0.14", features = ["tokio", "image"] }
@@ -31,3 +41,10 @@ moka = { version = "0.12", features = ["future"] }
 redb = "4"
 base64 = "0.22.1"
 urlencoding = "2.1.3"
+rust-i18n = "4.1.0"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+openvr = { version = "0.9.0", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openxr = { version = "0.21.1", optional = true }

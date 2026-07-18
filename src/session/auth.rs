@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{
@@ -17,7 +20,8 @@ pub struct Auth {
     client: Client,
     cookie_jar: Arc<Jar>,
     keyring_service: String,
-    keyring_account: String,
+    keyring_legacy_account: String,
+    keyring_sessions_account: String,
     user_agent: String,
 }
 
@@ -60,6 +64,7 @@ pub enum AuthError {
     Keyring(keyring::Error),
     Serde(serde_json::Error),
     MissingAuthCookie,
+    SessionSwitch(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,12 +84,39 @@ pub enum LogoutResult {
     InvalidUrl,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSession {
     auth: String,
 
     #[serde(rename = "twoFactorAuth")]
     two_factor_auth: Option<String>,
+
+    #[serde(default)]
+    user_id: String,
+
+    #[serde(default)]
+    display_name: String,
+
+    #[serde(default)]
+    avatar_url: Option<String>,
+
+    #[serde(default)]
+    last_used_unix_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SavedSession {
+    pub user_id: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredSessions {
+    active_user_id: Option<String>,
+    sessions: Vec<StoredSession>,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,7 +145,8 @@ impl Auth {
             client,
             cookie_jar,
             keyring_service: "vrcx-rs".to_string(),
-            keyring_account: "vrchat-session".to_string(),
+            keyring_legacy_account: "vrchat-session".to_string(),
+            keyring_sessions_account: "vrchat-sessions-v2".to_string(),
             user_agent,
         })
     }
@@ -165,7 +198,7 @@ impl Auth {
             return LoginResult::TwoFactorRequired(two_factor_methods);
         }
 
-        if let Err(err) = self.save_session() {
+        if let Err(err) = self.save_session_for_user(&user) {
             return LoginResult::SessionSaveError(err);
         }
 
@@ -234,7 +267,7 @@ impl Auth {
             }
         };
 
-        if let Err(err) = self.save_session() {
+        if let Err(err) = self.save_session_for_user(&user) {
             return VerifyTwoFactorResult::SessionSaveError(err);
         }
 
@@ -255,13 +288,14 @@ impl Auth {
         match self.current_user().await {
             Ok(user) => {
                 tracing::info!("saved session restored");
+                let _ = self.save_session_for_user(&user);
                 RestoreSessionResult::Success(user)
             }
 
             Err(CurrentUserError::Http(StatusCode::UNAUTHORIZED))
             | Err(CurrentUserError::Http(StatusCode::FORBIDDEN)) => {
                 tracing::warn!("saved session is no longer valid");
-                let _ = self.clear_saved_session();
+                let _ = self.clear_active_saved_session();
                 RestoreSessionResult::InvalidSession
             }
 
@@ -275,43 +309,166 @@ impl Auth {
         }
     }
 
-    pub fn save_session(&self) -> Result<(), AuthError> {
-        let cookies = self.extract_session_cookies()?;
-
-        let json = serde_json::to_string(&cookies).map_err(AuthError::Serde)?;
-
-        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_account)
-            .map_err(AuthError::Keyring)?;
-
-        entry.set_password(&json).map_err(AuthError::Keyring)?;
-
-        Ok(())
+    pub fn save_session_for_user(&self, user: &User) -> Result<(), AuthError> {
+        let mut session = self.extract_session_cookies()?;
+        session.user_id = user.identity.id.clone();
+        session.display_name = user.identity.display_name.clone();
+        session.avatar_url = user_avatar_url(user);
+        session.last_used_unix_ms = now_unix_ms();
+        self.upsert_saved_session(session)
     }
 
     fn load_session(&self) -> Result<Option<StoredSession>, AuthError> {
-        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_account)
+        let sessions = self.load_saved_sessions()?;
+        let active_user_id = sessions.active_user_id.as_deref();
+        let session = sessions
+            .sessions
+            .iter()
+            .find(|session| {
+                active_user_id
+                    .map(|active_user_id| session.user_id == active_user_id)
+                    .unwrap_or(false)
+            })
+            .or_else(|| {
+                sessions
+                    .sessions
+                    .iter()
+                    .max_by_key(|session| session.last_used_unix_ms)
+            })
+            .cloned();
+
+        Ok(session)
+    }
+
+    pub fn saved_sessions(&self) -> Result<Vec<SavedSession>, AuthError> {
+        let sessions = self.load_saved_sessions()?;
+        let active_user_id = sessions.active_user_id.as_deref();
+        Ok(sessions
+            .sessions
+            .into_iter()
+            .filter(|session| !session.user_id.is_empty())
+            .map(|session| SavedSession {
+                active: active_user_id == Some(session.user_id.as_str()),
+                user_id: session.user_id,
+                avatar_url: session.avatar_url,
+                display_name: if session.display_name.is_empty() {
+                    "VRChat".to_string()
+                } else {
+                    session.display_name
+                },
+            })
+            .collect())
+    }
+
+    pub async fn switch_session(&self, user_id: &str) -> Result<Option<User>, AuthError> {
+        let mut sessions = self.load_saved_sessions()?;
+        let Some(index) = sessions
+            .sessions
+            .iter()
+            .position(|session| session.user_id == user_id)
+        else {
+            return Ok(None);
+        };
+
+        let mut session = sessions.sessions[index].clone();
+        session.last_used_unix_ms = now_unix_ms();
+        sessions.sessions[index] = session.clone();
+        sessions.active_user_id = Some(session.user_id.clone());
+        self.save_saved_sessions(&sessions)?;
+
+        self.clear_runtime_cookies();
+        self.inject_session_cookies(&session);
+
+        let user = self
+            .current_user()
+            .await
+            .map_err(|error| AuthError::SessionSwitch(format!("{error:?}")))?;
+        self.save_session_for_user(&user)?;
+        Ok(Some(user))
+    }
+
+    pub fn clear_active_saved_session(&self) -> Result<(), AuthError> {
+        let mut sessions = self.load_saved_sessions()?;
+        let active_user_id = sessions.active_user_id.clone();
+        if let Some(active_user_id) = active_user_id {
+            sessions
+                .sessions
+                .retain(|session| session.user_id != active_user_id);
+        }
+        sessions.active_user_id = sessions
+            .sessions
+            .iter()
+            .max_by_key(|session| session.last_used_unix_ms)
+            .map(|session| session.user_id.clone());
+        self.save_saved_sessions(&sessions)
+    }
+
+    pub fn clear_saved_session(&self) -> Result<(), AuthError> {
+        self.clear_active_saved_session()
+    }
+
+    fn upsert_saved_session(&self, session: StoredSession) -> Result<(), AuthError> {
+        let mut sessions = self.load_saved_sessions()?;
+        sessions
+            .sessions
+            .retain(|candidate| candidate.user_id != session.user_id);
+        sessions.active_user_id = Some(session.user_id.clone());
+        sessions.sessions.push(session);
+        sessions
+            .sessions
+            .sort_by(|a, b| b.last_used_unix_ms.cmp(&a.last_used_unix_ms));
+        self.save_saved_sessions(&sessions)
+    }
+
+    fn load_saved_sessions(&self) -> Result<StoredSessions, AuthError> {
+        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_sessions_account)
             .map_err(AuthError::Keyring)?;
 
         let json = match entry.get_password() {
             Ok(json) => json,
-            Err(keyring::Error::NoEntry) => return Ok(None),
+            Err(keyring::Error::NoEntry) => {
+                return self.load_legacy_saved_sessions();
+            }
             Err(err) => return Err(AuthError::Keyring(err)),
         };
 
-        let session = serde_json::from_str::<StoredSession>(&json).map_err(AuthError::Serde)?;
-
-        Ok(Some(session))
+        serde_json::from_str::<StoredSessions>(&json).map_err(AuthError::Serde)
     }
 
-    pub fn clear_saved_session(&self) -> Result<(), AuthError> {
-        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_account)
+    fn save_saved_sessions(&self, sessions: &StoredSessions) -> Result<(), AuthError> {
+        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_sessions_account)
             .map_err(AuthError::Keyring)?;
 
-        match entry.delete_credential() {
-            Ok(_) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(err) => Err(AuthError::Keyring(err)),
+        if sessions.sessions.is_empty() {
+            match entry.delete_credential() {
+                Ok(_) | Err(keyring::Error::NoEntry) => return Ok(()),
+                Err(error) => return Err(AuthError::Keyring(error)),
+            }
         }
+
+        let json = serde_json::to_string(sessions).map_err(AuthError::Serde)?;
+        entry.set_password(&json).map_err(AuthError::Keyring)
+    }
+
+    fn load_legacy_saved_sessions(&self) -> Result<StoredSessions, AuthError> {
+        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_legacy_account)
+            .map_err(AuthError::Keyring)?;
+
+        let json = match entry.get_password() {
+            Ok(json) => json,
+            Err(keyring::Error::NoEntry) => return Ok(StoredSessions::default()),
+            Err(err) => return Err(AuthError::Keyring(err)),
+        };
+
+        let mut session = serde_json::from_str::<StoredSession>(&json).map_err(AuthError::Serde)?;
+        if session.last_used_unix_ms == 0 {
+            session.last_used_unix_ms = now_unix_ms();
+        }
+
+        Ok(StoredSessions {
+            active_user_id: (!session.user_id.is_empty()).then(|| session.user_id.clone()),
+            sessions: vec![session],
+        })
     }
 
     pub fn session_tokens(&self) -> Result<SessionTokens, AuthError> {
@@ -337,6 +494,10 @@ impl Auth {
         );
     }
 
+    pub fn clear_runtime_session(&self) {
+        self.clear_runtime_cookies();
+    }
+
     pub async fn logout(&self) -> LogoutResult {
         tracing::info!("logging out");
         let url = match self.endpoint("logout") {
@@ -352,7 +513,7 @@ impl Auth {
         let status = response.status();
 
         // Même si VRChat répond 401, on nettoie quand même la session locale.
-        let _ = self.clear_saved_session();
+        let _ = self.clear_active_saved_session();
         self.clear_runtime_cookies();
 
         if status.is_success() {
@@ -409,6 +570,10 @@ impl Auth {
         Ok(StoredSession {
             auth,
             two_factor_auth,
+            user_id: String::new(),
+            display_name: String::new(),
+            avatar_url: None,
+            last_used_unix_ms: 0,
         })
     }
 
@@ -486,4 +651,24 @@ fn find_cookie(cookie_header: &str, name: &str) -> Option<String> {
             None
         }
     })
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn user_avatar_url(user: &User) -> Option<String> {
+    [
+        user.profile.user_icon.as_str(),
+        user.profile.profile_pic_override_thumbnail.as_str(),
+        user.profile.profile_pic_override.as_str(),
+        user.profile.current_avatar_thumbnail_image_url.as_str(),
+        user.profile.current_avatar_image_url.as_str(),
+    ]
+    .into_iter()
+    .find(|url| !url.trim().is_empty())
+    .map(str::to_string)
 }

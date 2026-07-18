@@ -15,6 +15,7 @@ use iced::{
         text, text_input,
     },
 };
+use rust_i18n::t;
 use serde_json::Value;
 
 const RESOURCE_PAGE_LIMIT: u32 = 50;
@@ -36,7 +37,7 @@ use crate::{
         groups::GroupSearchQuery, inventory::InventoryQuery, users::UserSearchQuery,
         worlds::WorldSearchQuery,
     },
-    backend::{AuthenticatedSession, Backend, BackendConfig, LoginOutcome},
+    backend::{AuthenticatedSession, Backend, BackendConfig, LoginOutcome, SessionAccount},
     models::{inventory::InventoryConsume, invite::InviteMessageType},
     session::auth::TwoFactorMethod,
     store::{AppSnapshot, WebSocketStatus},
@@ -110,29 +111,29 @@ impl Page {
         Page::Prints,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Dashboard => "Overview",
-            Self::Friends => "Friends",
-            Self::Notifications => "Notifications",
-            Self::Worlds => "Worlds",
-            Self::Users => "Users",
-            Self::Groups => "Groups",
-            Self::Avatars => "Avatars",
-            Self::MyAvatars => "My Avatars",
-            Self::Inventory => "Inventory",
-            Self::Calendar => "Calendar",
-            Self::Economy => "Economy",
-            Self::Files => "Files",
-            Self::Jams => "Jams",
-            Self::Props => "Props",
-            Self::Favorites => "Favorites",
-            Self::Instances => "Instances",
-            Self::Invites => "Invites",
-            Self::Moderation => "Moderation",
-            Self::Prints => "Prints",
-            Self::System => "System",
-            Self::Api => "API workspace",
+            Self::Dashboard => t!("pages.dashboard").to_string(),
+            Self::Friends => t!("pages.friends").to_string(),
+            Self::Notifications => t!("pages.notifications").to_string(),
+            Self::Worlds => t!("pages.worlds").to_string(),
+            Self::Users => t!("pages.users").to_string(),
+            Self::Groups => t!("pages.groups").to_string(),
+            Self::Avatars => t!("pages.avatars").to_string(),
+            Self::MyAvatars => t!("pages.my_avatars").to_string(),
+            Self::Inventory => t!("pages.inventory").to_string(),
+            Self::Calendar => t!("pages.calendar").to_string(),
+            Self::Economy => t!("pages.economy").to_string(),
+            Self::Files => t!("pages.files").to_string(),
+            Self::Jams => t!("pages.jams").to_string(),
+            Self::Props => t!("pages.props").to_string(),
+            Self::Favorites => t!("pages.favorites").to_string(),
+            Self::Instances => t!("pages.instances").to_string(),
+            Self::Invites => t!("pages.invites").to_string(),
+            Self::Moderation => t!("pages.moderation").to_string(),
+            Self::Prints => t!("pages.prints").to_string(),
+            Self::System => t!("pages.system").to_string(),
+            Self::Api => t!("pages.api").to_string(),
         }
     }
 
@@ -201,9 +202,41 @@ struct NavCategory {
 impl NavCategory {
     fn essentials() -> Self {
         Self {
-            name: "Essentials".to_string(),
+            name: t!("nav.essentials").to_string(),
             pages: Page::ESSENTIAL.to_vec(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Locale {
+    English,
+    French,
+}
+
+impl Locale {
+    const ALL: [Self; 2] = [Self::English, Self::French];
+
+    fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::French => "fr",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::English => "EN",
+            Self::French => "FR",
+        }
+    }
+
+    fn from_environment() -> Self {
+        std::env::var("LANG")
+            .ok()
+            .filter(|lang| lang.to_lowercase().starts_with("fr"))
+            .map(|_| Self::French)
+            .unwrap_or(Self::English)
     }
 }
 
@@ -227,12 +260,12 @@ enum FriendSection {
 impl FriendSection {
     const ALL: [Self; 4] = [Self::InVrchat, Self::Web, Self::Favorites, Self::Offline];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::InVrchat => "In VRChat",
-            Self::Web => "Online on web",
-            Self::Favorites => "Favorites",
-            Self::Offline => "Offline",
+            Self::InVrchat => t!("friends.sections.in_vrchat").to_string(),
+            Self::Web => t!("friends.sections.web").to_string(),
+            Self::Favorites => t!("friends.sections.favorites").to_string(),
+            Self::Offline => t!("friends.sections.offline").to_string(),
         }
     }
 }
@@ -253,13 +286,13 @@ impl DetailTab {
         Self::FriendGroups,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Overview => "Overview",
-            Self::MutualFriends => "Mutual friends",
-            Self::MutualGroups => "Mutual groups",
-            Self::Groups => "Groups",
-            Self::FriendGroups => "Friend groups",
+            Self::Overview => t!("detail.tabs.overview").to_string(),
+            Self::MutualFriends => t!("detail.tabs.mutual_friends").to_string(),
+            Self::MutualGroups => t!("detail.tabs.mutual_groups").to_string(),
+            Self::Groups => t!("detail.tabs.groups").to_string(),
+            Self::FriendGroups => t!("detail.tabs.friend_groups").to_string(),
         }
     }
 }
@@ -317,6 +350,11 @@ pub struct App {
     nav_categories: Vec<NavCategory>,
     collapsed_nav_categories: HashSet<String>,
     panel_selector_open: bool,
+    settings_open: bool,
+    nav_edit_mode: bool,
+    account_menu_open: bool,
+    saved_sessions: Vec<SessionAccount>,
+    locale: Locale,
     new_category_name: String,
     loading: bool,
     error: Option<String>,
@@ -329,7 +367,7 @@ pub struct App {
 
 #[derive(Debug, Clone)]
 enum Message {
-    RestoreFinished(Result<Option<AuthenticatedSession>, String>),
+    BootFinished(Result<(Vec<SessionAccount>, Option<AuthenticatedSession>), String>),
     UsernameChanged(String),
     PasswordChanged(String),
     Login,
@@ -354,6 +392,17 @@ enum Message {
     ToggleNavCategory(String),
     OpenPanelSelector,
     ClosePanelSelector,
+    ToggleNavEditMode,
+    ToggleAccountMenu,
+    CloseAccountMenu,
+    OpenSettings,
+    CloseSettings,
+    SavedSessionsLoaded(Result<Vec<SessionAccount>, String>),
+    AddSession,
+    AddSessionFinished(Result<(), String>),
+    SwitchSession(String),
+    SwitchSessionFinished(Result<Option<AuthenticatedSession>, String>),
+    LocaleSelected(Locale),
     NewCategoryNameChanged(String),
     CreateNavCategory,
     AddPageToNav(String, Page),
@@ -387,7 +436,7 @@ enum Message {
 
 pub fn run() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
-        .title("VRCX Rust")
+        .title("VRCX - BIR")
         .theme(app_theme)
         .subscription(App::subscription)
         .window(iced::window::Settings {
@@ -400,6 +449,9 @@ pub fn run() -> iced::Result {
 
 impl App {
     fn boot() -> (Self, Task<Message>) {
+        let locale = Locale::from_environment();
+        rust_i18n::set_locale(locale.code());
+
         let mut app = Self {
             backend: None,
             snapshot: AppSnapshot::default(),
@@ -433,6 +485,11 @@ impl App {
             nav_categories: vec![NavCategory::essentials()],
             collapsed_nav_categories: HashSet::new(),
             panel_selector_open: false,
+            settings_open: false,
+            nav_edit_mode: false,
+            account_menu_open: false,
+            saved_sessions: Vec::new(),
+            locale,
             new_category_name: String::new(),
             loading: true,
             error: None,
@@ -452,12 +509,20 @@ impl App {
                     app,
                     Task::perform(
                         async move {
-                            task_backend
-                                .restore_session()
-                                .await
-                                .map_err(|error| error.to_string())
+                            let sessions = task_backend
+                                .saved_sessions()
+                                .map_err(|error| error.to_string())?;
+                            let restored = if sessions.len() == 1 {
+                                task_backend
+                                    .restore_session()
+                                    .await
+                                    .map_err(|error| error.to_string())?
+                            } else {
+                                None
+                            };
+                            Ok((sessions, restored))
                         },
-                        Message::RestoreFinished,
+                        Message::BootFinished,
                     ),
                 )
             }
@@ -471,15 +536,21 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::RestoreFinished(result) => {
+            Message::BootFinished(result) => {
                 self.loading = false;
                 match result {
-                    Ok(session) => {
+                    Ok((sessions, session)) => {
+                        self.saved_sessions = sessions;
                         let authenticated = session.is_some();
                         self.session = session;
                         if authenticated {
-                            return self.load_friend_favorites();
+                            return Task::batch([
+                                self.load_friend_favorites(),
+                                self.load_saved_sessions(),
+                                self.load_missing_thumbnails(),
+                            ]);
                         }
+                        return self.load_missing_thumbnails();
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -517,7 +588,11 @@ impl App {
                     Ok(LoginOutcome::Authenticated(session)) => {
                         self.session = Some(session);
                         self.password.clear();
-                        return self.load_friend_favorites();
+                        return Task::batch([
+                            self.load_friend_favorites(),
+                            self.load_saved_sessions(),
+                            self.load_missing_thumbnails(),
+                        ]);
                     }
                     Ok(LoginOutcome::TwoFactorRequired(methods)) => {
                         self.selected_two_factor = methods.first().cloned();
@@ -560,6 +635,7 @@ impl App {
                 let Some(backend) = self.backend.clone() else {
                     return Task::none();
                 };
+                self.account_menu_open = false;
                 self.loading = true;
                 Task::perform(
                     async move { backend.logout().await.map_err(|error| error.to_string()) },
@@ -580,6 +656,7 @@ impl App {
                         self.pending_thumbnails.clear();
                         self.favorite_friend_ids.clear();
                         self.two_factor_methods.clear();
+                        return self.load_saved_sessions();
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -730,6 +807,126 @@ impl App {
             }
             Message::ClosePanelSelector => {
                 self.panel_selector_open = false;
+                Task::none()
+            }
+            Message::ToggleNavEditMode => {
+                self.nav_edit_mode = !self.nav_edit_mode;
+                Task::none()
+            }
+            Message::ToggleAccountMenu => {
+                self.account_menu_open = !self.account_menu_open;
+                Task::none()
+            }
+            Message::CloseAccountMenu => {
+                self.account_menu_open = false;
+                Task::none()
+            }
+            Message::OpenSettings => {
+                self.account_menu_open = false;
+                self.settings_open = true;
+                self.load_saved_sessions()
+            }
+            Message::CloseSettings => {
+                self.settings_open = false;
+                Task::none()
+            }
+            Message::SavedSessionsLoaded(result) => {
+                match result {
+                    Ok(sessions) => {
+                        self.saved_sessions = sessions;
+                        return self.load_missing_thumbnails();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                Task::none()
+            }
+            Message::SwitchSession(user_id) => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                self.loading = true;
+                self.error = None;
+                self.notice = None;
+                self.account_menu_open = false;
+                Task::perform(
+                    async move {
+                        backend
+                            .switch_session(&user_id)
+                            .await
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::SwitchSessionFinished,
+                )
+            }
+            Message::SwitchSessionFinished(result) => {
+                self.loading = false;
+                match result {
+                    Ok(Some(session)) => {
+                        self.session = Some(session);
+                        self.results.clear();
+                        self.selected_item = None;
+                        self.selected_detail = None;
+                        self.user_relations = UserRelations::default();
+                        self.thumbnails.clear();
+                        self.pending_thumbnails.clear();
+                        self.favorite_friend_ids.clear();
+                        self.notice = Some(t!("account.session_switched").to_string());
+                        return Task::batch([
+                            self.load_friend_favorites(),
+                            self.load_saved_sessions(),
+                            self.load_page(),
+                            self.load_missing_thumbnails(),
+                        ]);
+                    }
+                    Ok(None) => {
+                        self.error = Some(t!("account.session_not_found").to_string());
+                        return self.load_saved_sessions();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                Task::none()
+            }
+            Message::AddSession => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                self.loading = true;
+                self.error = None;
+                self.notice = None;
+                self.account_menu_open = false;
+                self.settings_open = false;
+                Task::perform(
+                    async move {
+                        backend
+                            .begin_new_session()
+                            .await
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::AddSessionFinished,
+                )
+            }
+            Message::AddSessionFinished(result) => {
+                self.loading = false;
+                match result {
+                    Ok(()) => {
+                        self.session = None;
+                        self.snapshot = AppSnapshot::default();
+                        self.results.clear();
+                        self.selected_item = None;
+                        self.selected_detail = None;
+                        self.user_relations = UserRelations::default();
+                        self.thumbnails.clear();
+                        self.pending_thumbnails.clear();
+                        self.favorite_friend_ids.clear();
+                        self.two_factor_methods.clear();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                Task::none()
+            }
+            Message::LocaleSelected(locale) => {
+                self.locale = locale;
+                rust_i18n::set_locale(locale.code());
                 Task::none()
             }
             Message::NewCategoryNameChanged(value) => {
@@ -1304,6 +1501,20 @@ impl App {
                     .filter_map(|member| non_empty(string_field(member, &["userIcon"]))),
             )
             .chain(self.visible_friend_thumbnail_urls())
+            .chain(self.session_avatar_urls())
+            .collect()
+    }
+
+    fn session_avatar_urls(&self) -> Vec<String> {
+        self.session
+            .as_ref()
+            .and_then(|session| session.avatar_url.clone())
+            .into_iter()
+            .chain(
+                self.saved_sessions
+                    .iter()
+                    .filter_map(|session| session.avatar_url.clone()),
+            )
             .collect()
     }
 
@@ -1724,6 +1935,16 @@ impl App {
         )
     }
 
+    fn load_saved_sessions(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.saved_sessions().map_err(|error| error.to_string()) },
+            Message::SavedSessionsLoaded,
+        )
+    }
+
     fn view(&self) -> Element<'_, Message> {
         if self.session.is_none() {
             return self.auth_view();
@@ -1758,11 +1979,27 @@ impl App {
             base
         };
 
-        if self.panel_selector_open {
+        let base = if self.panel_selector_open {
             stack![
                 base,
                 opaque(
                     container(self.panel_selector_modal())
+                        .width(Fill)
+                        .height(Fill)
+                        .center_x(Fill)
+                        .center_y(Fill)
+                )
+            ]
+            .into()
+        } else {
+            base
+        };
+
+        if self.settings_open {
+            stack![
+                base,
+                opaque(
+                    container(self.settings_modal())
                         .width(Fill)
                         .height(Fill)
                         .center_x(Fill)
@@ -1798,9 +2035,9 @@ impl App {
         let panel = container(
             column![
                 row![
-                    text("Search filters").size(15),
+                    text(t!("search.filters").to_string()).size(15),
                     Space::new().width(Fill),
-                    button(text("Dismiss").size(14))
+                    button(text(t!("actions.dismiss").to_string()).size(14))
                         .on_press(Message::CloseSearchOverlay)
                         .style(button::text)
                 ]
@@ -1822,6 +2059,7 @@ impl App {
     }
 
     fn panel_selector_modal(&self) -> Element<'_, Message> {
+        let new_category_placeholder = t!("nav.new_category").to_string();
         let target_categories =
             self.nav_categories
                 .iter()
@@ -1832,7 +2070,7 @@ impl App {
                             let row = chunk.iter().copied().fold(row![].spacing(6), |row, page| {
                                 let contains = category.pages.contains(&page);
                                 row.push(
-                                    button(page.label())
+                                    button(text(page.label()))
                                         .width(Fill)
                                         .on_press(if contains {
                                             Message::RemovePageFromNav(category.name.clone(), page)
@@ -1854,7 +2092,10 @@ impl App {
                             row![
                                 text(&category.name).size(13),
                                 Space::new().width(Fill),
-                                text(format!("{} panels", category.pages.len())).size(11)
+                                text(
+                                    t!("nav.panel_count", count = category.pages.len()).to_string()
+                                )
+                                .size(11)
                             ]
                             .align_y(iced::Center),
                             pages
@@ -1866,29 +2107,31 @@ impl App {
         container(
             column![
                 row![
-                    text("Select Panel Content").size(18),
+                    text(t!("nav.select_panel_content").to_string()).size(18),
                     Space::new().width(Fill),
-                    button(text("Close").size(12))
+                    button(text(t!("actions.close").to_string()).size(12))
                         .on_press(Message::ClosePanelSelector)
                         .style(button::text)
                 ]
                 .align_y(iced::Center),
-                text("Default sidebar keeps only the essential pages. Add pages into any category below.").size(11),
+                text(t!("nav.panel_selector_help").to_string()).size(11),
                 rule::horizontal(1),
                 row![
-                    text_input("New category", &self.new_category_name)
+                    text_input(&new_category_placeholder, &self.new_category_name)
                         .on_input(Message::NewCategoryNameChanged)
                         .on_submit(Message::CreateNavCategory)
                         .padding(9),
-                    button(text("Create").size(14))
+                    button(text(t!("actions.create").to_string()).size(14))
                         .on_press(Message::CreateNavCategory)
                         .style(button::secondary)
                 ]
                 .spacing(8),
-                scrollable(target_categories).spacing(SCROLLBAR_SPACING).height(Length::Fixed(420.0)),
+                scrollable(target_categories)
+                    .spacing(SCROLLBAR_SPACING)
+                    .height(Length::Fixed(420.0)),
                 row![
                     Space::new().width(Fill),
-                    button(text("Close").size(14))
+                    button(text(t!("actions.close").to_string()).size(14))
                         .on_press(Message::ClosePanelSelector)
                         .style(button::secondary)
                 ]
@@ -1902,20 +2145,122 @@ impl App {
         .into()
     }
 
+    fn settings_modal(&self) -> Element<'_, Message> {
+        let sessions: Element<'_, Message> = if self.saved_sessions.is_empty() {
+            container(text(t!("settings.no_sessions").to_string()).size(13))
+                .height(Length::Fixed(80.0))
+                .center_y(Length::Fixed(80.0))
+                .into()
+        } else {
+            self.saved_sessions
+                .iter()
+                .fold(column![].spacing(8), |column, session| {
+                    let active = session.active
+                        || self
+                            .session
+                            .as_ref()
+                            .is_some_and(|active| active.user_id == session.user_id);
+                    let action: Element<'_, Message> = if active {
+                        container(text(t!("account.active").to_string()).size(12))
+                            .padding([6, 10])
+                            .style(container::bordered_box)
+                            .into()
+                    } else {
+                        button(text(t!("account.switch").to_string()).size(13))
+                            .on_press(Message::SwitchSession(session.user_id.clone()))
+                            .style(button::secondary)
+                            .padding([7, 10])
+                            .into()
+                    };
+                    column.push(
+                        container(
+                            row![
+                                account_avatar(
+                                    &session.display_name,
+                                    session.avatar_url.as_deref(),
+                                    &self.thumbnails
+                                ),
+                                column![
+                                    text(session.display_name.clone()).size(14),
+                                    text(session.user_id.clone()).size(10)
+                                ]
+                                .spacing(2)
+                                .width(Fill),
+                                action
+                            ]
+                            .spacing(10)
+                            .align_y(iced::Center),
+                        )
+                        .padding(10)
+                        .width(Fill)
+                        .style(container::bordered_box),
+                    )
+                })
+                .into()
+        };
+
+        let locale_controls = Locale::ALL
+            .into_iter()
+            .fold(row![].spacing(8), |row, locale| {
+                row.push(
+                    button(text(locale.label()).size(13))
+                        .on_press(Message::LocaleSelected(locale))
+                        .style(if self.locale == locale {
+                            button::primary
+                        } else {
+                            button::secondary
+                        })
+                        .padding([8, 14]),
+                )
+            });
+
+        container(
+            column![
+                row![
+                    text(t!("settings.title").to_string()).size(18),
+                    Space::new().width(Fill),
+                    button(text(t!("actions.close").to_string()).size(12))
+                        .on_press(Message::CloseSettings)
+                        .style(button::text)
+                ]
+                .align_y(iced::Center),
+                rule::horizontal(1),
+                text(t!("settings.sessions").to_string()).size(15),
+                sessions,
+                button(text(t!("account.add_session").to_string()).size(13))
+                    .on_press(Message::AddSession)
+                    .style(button::secondary)
+                    .padding([8, 12]),
+                Space::new().height(6),
+                text(t!("settings.localization").to_string()).size(15),
+                locale_controls
+            ]
+            .spacing(12),
+        )
+        .width(Length::Fixed(520.0))
+        .max_width(520.0)
+        .padding(18)
+        .style(container::bordered_box)
+        .into()
+    }
+
     fn auth_view(&self) -> Element<'_, Message> {
-        let title = text("VRCX Rust").size(34);
-        let subtitle = text("Your VRChat workspace").size(16);
+        let title = text("VRCX - BIR").size(34);
+        let subtitle = text(t!("auth.subtitle").to_string()).size(16);
+        let username_placeholder = t!("auth.username").to_string();
+        let password_placeholder = t!("auth.password").to_string();
+        let verification_placeholder = t!("auth.verification_code").to_string();
 
         let form: Element<'_, Message> = if self.two_factor_methods.is_empty() {
             column![
-                text_input("Username or email", &self.username)
+                text_input(&username_placeholder, &self.username)
                     .on_input(Message::UsernameChanged)
                     .padding(12),
-                text_input("Password", &self.password)
+                text_input(&password_placeholder, &self.password)
                     .on_input(Message::PasswordChanged)
                     .secure(true)
                     .padding(12),
-                button(text("Sign in").size(14))
+                button(text(t!("auth.sign_in").to_string()).size(14))
                     .on_press_maybe((!self.loading).then_some(Message::Login))
                     .style(button::primary)
                     .padding([10, 18]),
@@ -1940,12 +2285,12 @@ impl App {
                         )
                     });
             column![
-                text("Two-factor authentication").size(18),
+                text(t!("auth.two_factor").to_string()).size(18),
                 methods,
-                text_input("Verification code", &self.two_factor_code)
+                text_input(&verification_placeholder, &self.two_factor_code)
                     .on_input(Message::TwoFactorCodeChanged)
                     .padding(12),
-                button(text("Verify").size(14))
+                button(text(t!("auth.verify").to_string()).size(14))
                     .on_press_maybe((!self.loading).then_some(Message::VerifyTwoFactor))
                     .style(button::primary)
                     .padding([10, 18]),
@@ -1954,11 +2299,57 @@ impl App {
             .into()
         };
 
+        let saved_sessions: Element<'_, Message> = if self.saved_sessions.is_empty() {
+            Space::new().height(0).into()
+        } else {
+            let sessions =
+                self.saved_sessions
+                    .iter()
+                    .fold(column![].spacing(7), |column, session| {
+                        column.push(
+                            button(
+                                row![
+                                    account_avatar(
+                                        &session.display_name,
+                                        session.avatar_url.as_deref(),
+                                        &self.thumbnails
+                                    ),
+                                    column![
+                                        text(session.display_name.clone()).size(14),
+                                        text(session.user_id.clone()).size(10)
+                                    ]
+                                    .spacing(2)
+                                    .width(Fill),
+                                    text(t!("account.switch").to_string()).size(12)
+                                ]
+                                .spacing(10)
+                                .align_y(iced::Center),
+                            )
+                            .on_press_maybe(
+                                (!self.loading)
+                                    .then_some(Message::SwitchSession(session.user_id.clone())),
+                            )
+                            .style(button::secondary)
+                            .padding([8, 10])
+                            .width(Fill),
+                        )
+                    });
+
+            column![
+                text(t!("settings.sessions").to_string()).size(14),
+                sessions,
+                rule::horizontal(1)
+            ]
+            .spacing(9)
+            .into()
+        };
+
         let panel = container(column![
             title,
             subtitle,
             Space::new().height(18),
             self.feedback(),
+            saved_sessions,
             form
         ])
         .width(Length::Fixed(390.0))
@@ -1977,13 +2368,25 @@ impl App {
                 let rows: Element<'_, Message> = if collapsed {
                     Space::new().height(0).into()
                 } else if category.pages.is_empty() {
-                    text("Empty").size(11).into()
+                    text(t!("nav.empty").to_string()).size(11).into()
                 } else {
                     category
                         .pages
                         .iter()
                         .copied()
                         .fold(column![].spacing(4), |rows, page| {
+                            let remove_button: Element<'_, Message> = if self.nav_edit_mode {
+                                button(text(t!("actions.remove").to_string()).size(11))
+                                    .on_press(Message::RemovePageFromNav(
+                                        category.name.clone(),
+                                        page,
+                                    ))
+                                    .style(button::text)
+                                    .padding([8, 6])
+                                    .into()
+                            } else {
+                                Space::new().width(0).into()
+                            };
                             rows.push(
                                 row![
                                     button(text(page.label()).size(14))
@@ -1995,13 +2398,7 @@ impl App {
                                             button::text
                                         })
                                         .on_press(Message::Navigate(page)),
-                                    button(text("Remove").size(11))
-                                        .on_press(Message::RemovePageFromNav(
-                                            category.name.clone(),
-                                            page
-                                        ))
-                                        .style(button::text)
-                                        .padding([8, 6])
+                                    remove_button
                                 ]
                                 .align_y(iced::Center),
                             )
@@ -2029,24 +2426,104 @@ impl App {
                 )
             });
 
+        let account_controls: Element<'_, Message> = if self.account_menu_open {
+            column![self.account_menu(), self.account_button()]
+                .spacing(10)
+                .into()
+        } else {
+            self.account_button()
+        };
+
         container(column![
-            text("VRCX").size(24),
-            text("RUST CLIENT").size(11),
+            text("VRCX - BIR").size(24),
             Space::new().height(18),
             scrollable(nav).spacing(SCROLLBAR_SPACING).height(Fill),
-            button(text("Panel").size(14))
-                .on_press(Message::OpenPanelSelector)
-                .style(button::secondary)
-                .width(Fill),
-            button(text("Sign out").size(14))
-                .on_press(Message::Logout)
-                .style(button::danger)
-                .width(Fill)
+            account_controls
         ])
         .width(Length::Fixed(190.0))
         .height(Fill)
         .padding(14)
         .style(container::dark)
+        .into()
+    }
+
+    fn account_button(&self) -> Element<'_, Message> {
+        let name = self
+            .session
+            .as_ref()
+            .map(|session| session.display_name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("VRChat");
+        let avatar_url = self
+            .session
+            .as_ref()
+            .and_then(|session| session.avatar_url.as_deref());
+        button(
+            row![
+                account_avatar(name, avatar_url, &self.thumbnails),
+                text(name.to_string()).size(15).width(Fill),
+                text(if self.account_menu_open { "^" } else { "v" }).size(12)
+            ]
+            .spacing(10)
+            .align_y(iced::Center),
+        )
+        .on_press(Message::ToggleAccountMenu)
+        .style(button::text)
+        .padding([8, 8])
+        .width(Fill)
+        .into()
+    }
+
+    fn account_menu(&self) -> Element<'_, Message> {
+        let name = self
+            .session
+            .as_ref()
+            .map(|session| session.display_name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("VRChat");
+        let avatar_url = self
+            .session
+            .as_ref()
+            .and_then(|session| session.avatar_url.as_deref());
+        let edit_label = if self.nav_edit_mode {
+            t!("actions.done").to_string()
+        } else {
+            t!("actions.edit").to_string()
+        };
+
+        container(
+            column![
+                row![
+                    account_avatar(name, avatar_url, &self.thumbnails),
+                    column![
+                        text(name.to_string()).size(15),
+                        text(t!("account.connected").to_string()).size(10)
+                    ]
+                    .spacing(2)
+                    .width(Fill),
+                    button(text("x").size(12))
+                        .on_press(Message::CloseAccountMenu)
+                        .style(button::text)
+                        .padding([4, 6])
+                ]
+                .spacing(10)
+                .align_y(iced::Center),
+                rule::horizontal(1),
+                account_menu_button(
+                    "⚙",
+                    t!("account.settings").to_string(),
+                    Message::OpenSettings
+                ),
+                account_menu_button("✎", edit_label, Message::ToggleNavEditMode),
+                account_menu_button("▦", t!("nav.panel").to_string(), Message::OpenPanelSelector),
+                rule::horizontal(1),
+                account_menu_button("⇱", t!("auth.sign_out").to_string(), Message::Logout),
+            ]
+            .spacing(8),
+        )
+        .padding(12)
+        .width(Fill)
+        .style(account_menu_style)
         .into()
     }
 
@@ -2129,7 +2606,7 @@ impl App {
         container(
             column![
                 row![
-                    text("Friends").size(16),
+                    text(t!("pages.friends").to_string()).size(16),
                     Space::new().width(Fill),
                     text(self.snapshot.friends.len().to_string()).size(11)
                 ]
@@ -2199,6 +2676,7 @@ impl App {
     }
 
     fn topbar(&self) -> Element<'_, Message> {
+        let search_placeholder = t!("search.global").to_string();
         let status = match (
             &self.snapshot.session.websocket_status,
             &self.snapshot.session.websocket_error,
@@ -2226,17 +2704,17 @@ impl App {
                 ],
                 Space::new().width(Fill),
                 text(status).size(12),
-                button(text("Sync").size(14))
+                button(text(t!("actions.sync").to_string()).size(14))
                     .on_press(Message::Synchronize)
                     .style(button::secondary),
-                button(text("Refresh").size(14))
+                button(text(t!("actions.refresh").to_string()).size(14))
                     .on_press(Message::Refresh)
                     .style(button::secondary)
             ]
             .align_y(iced::Center)
             .spacing(10),
             row![
-                text_input("Global search", &self.search)
+                text_input(&search_placeholder, &self.search)
                     .on_input(Message::SearchChanged)
                     .on_submit(Message::SubmitSearch)
                     .padding(9)
@@ -2256,7 +2734,7 @@ impl App {
                 row![
                     text(error).size(13),
                     Space::new().width(Fill),
-                    button(text("Dismiss").size(14))
+                    button(text(t!("actions.dismiss").to_string()).size(14))
                         .on_press(Message::ClearFeedback)
                         .style(button::text)
                 ]
@@ -2270,7 +2748,7 @@ impl App {
                 row![
                     text(notice).size(13),
                     Space::new().width(Fill),
-                    button(text("Dismiss").size(14))
+                    button(text(t!("actions.dismiss").to_string()).size(14))
                         .on_press(Message::ClearFeedback)
                         .style(button::text)
                 ]
@@ -2307,14 +2785,20 @@ impl App {
             .filter(|friend| friend.online)
             .count();
         let stats = row![
-            stat("Online friends", online.to_string()),
-            stat("All friends", self.snapshot.friends.len().to_string()),
             stat(
-                "Notifications",
+                t!("dashboard.online_friends").to_string(),
+                online.to_string()
+            ),
+            stat(
+                t!("dashboard.all_friends").to_string(),
+                self.snapshot.friends.len().to_string()
+            ),
+            stat(
+                t!("pages.notifications").to_string(),
                 self.snapshot.notifications.len().to_string()
             ),
             stat(
-                "Recent events",
+                t!("dashboard.recent_events").to_string(),
                 self.snapshot.recent_events.len().to_string()
             ),
         ]
@@ -2323,7 +2807,7 @@ impl App {
         column![
             stats,
             Space::new().height(18),
-            text("Recent activity").size(18),
+            text(t!("dashboard.recent_activity").to_string()).size(18),
             scrollable(self.snapshot.recent_events.iter().rev().take(30).fold(
                 column![].spacing(6),
                 |column, event| {
@@ -2369,9 +2853,9 @@ impl App {
             .collect::<Vec<_>>();
 
         let list = [
-            ("Favorite friends", favorites),
-            ("Online", online),
-            ("Offline", offline),
+            (t!("friends.favorite_friends").to_string(), favorites),
+            (t!("friends.online").to_string(), online),
+            (t!("friends.offline").to_string(), offline),
         ]
         .into_iter()
         .fold(column![].spacing(8), |column, (label, friends)| {
@@ -2428,7 +2912,7 @@ impl App {
                         location
                     ]
                     .width(Fill),
-                    button(text("Remove").size(14))
+                    button(text(t!("actions.remove").to_string()).size(14))
                         .on_press(Message::Unfriend(friend.user_id.clone()))
                         .style(button::danger)
                 ]
@@ -2455,12 +2939,13 @@ impl App {
                     let title = value
                         .get("message")
                         .and_then(Value::as_str)
-                        .unwrap_or("Notification");
+                        .map(str::to_string)
+                        .unwrap_or_else(|| t!("pages.notifications").to_string());
                     column.push(
                         container(
                             row![
                                 column![text(title).size(14), text(id).size(11)].width(Fill),
-                                button(text("Delete").size(14))
+                                button(text(t!("actions.delete").to_string()).size(14))
                                     .on_press(Message::DeleteNotification(id.clone()))
                                     .style(button::danger)
                             ]
@@ -2536,9 +3021,9 @@ impl App {
 
         column![
             if self.loading {
-                text("Loading...").size(12)
+                text(t!("status.loading").to_string()).size(12)
             } else {
-                text(format!("{} results", self.results.len())).size(12)
+                text(t!("status.results", count = self.results.len()).to_string()).size(12)
             },
             scrollable(list)
                 .spacing(SCROLLBAR_SPACING)
@@ -2656,7 +3141,7 @@ impl App {
             },
         );
         let management: Element<'_, Message> = if let Some(favorite_id) = &item.favorite_id {
-            button(text("Remove favorite").size(14))
+            button(text(t!("detail.remove_favorite").to_string()).size(14))
                 .on_press(Message::RemoveFavorite(favorite_id.clone()))
                 .style(button::danger)
                 .into()
@@ -2666,7 +3151,7 @@ impl App {
                     if json_bool(detail, &["isFriend", "social.isFriend"])
                         || self.selected_page == Page::Friends =>
                 {
-                    button(text("Remove friend").size(14))
+                    button(text(t!("detail.remove_friend").to_string()).size(14))
                         .on_press(Message::Unfriend(item.id.clone()))
                         .style(button::danger)
                         .into()
@@ -2675,7 +3160,7 @@ impl App {
                     if json_string(detail, &["membershipStatus"])
                         .is_some_and(|status| matches!(status.as_str(), "member" | "joined")) =>
                 {
-                    button(text("Leave group").size(14))
+                    button(text(t!("detail.leave_group").to_string()).size(14))
                         .on_press(Message::LeaveGroup(item.id.clone()))
                         .style(button::danger)
                         .into()
@@ -2717,7 +3202,7 @@ impl App {
                 .height(Length::Fixed(360.0))
                 .into()
         } else if self.relations_loading {
-            container(text("Loading related data...").size(12))
+            container(text(t!("detail.loading_related").to_string()).size(12))
                 .height(Length::Fixed(360.0))
                 .into()
         } else {
@@ -2731,7 +3216,9 @@ impl App {
             self.relation_list(items, page)
         };
         let detail_heading: Element<'_, Message> = if self.detail_loading {
-            text("Loading details...").size(12).into()
+            text(t!("detail.loading_details").to_string())
+                .size(12)
+                .into()
         } else {
             text(self.detail_tab.label()).size(16).into()
         };
@@ -2743,7 +3230,7 @@ impl App {
                     column![text(&item.title).size(24), text(&item.id).size(11), badges]
                         .spacing(7)
                         .width(Fill),
-                    button(text("Close").size(14))
+                    button(text(t!("actions.close").to_string()).size(14))
                         .on_press(Message::CloseItem)
                         .style(button::secondary)
                 ]
@@ -2759,7 +3246,7 @@ impl App {
                 body,
                 rule::horizontal(1),
                 row![
-                    text("Management").size(14),
+                    text(t!("detail.management").to_string()).size(14),
                     Space::new().width(Fill),
                     management
                 ]
@@ -2776,7 +3263,7 @@ impl App {
 
     fn relation_list<'a>(&'a self, items: &'a [ResultItem], page: Page) -> Element<'a, Message> {
         if items.is_empty() {
-            return container(text("No items").size(13))
+            return container(text(t!("status.no_items").to_string()).size(13))
                 .height(Length::Fixed(360.0))
                 .center_y(Length::Fixed(360.0))
                 .into();
@@ -2903,6 +3390,8 @@ impl App {
     }
 
     fn api_workspace(&self) -> Element<'_, Message> {
+        let route_placeholder = t!("api.route_placeholder").to_string();
+        let body_placeholder = t!("api.body_placeholder").to_string();
         let methods = ["GET", "POST", "PUT", "PATCH", "DELETE"].into_iter().fold(
             row![].spacing(6),
             |row, method| {
@@ -2919,18 +3408,18 @@ impl App {
         );
 
         column![
-            text("Authenticated API workspace").size(18),
+            text(t!("api.title").to_string()).size(18),
             methods,
-            text_input("Route, e.g. users/usr_...", &self.api_path)
+            text_input(&route_placeholder, &self.api_path)
                 .on_input(Message::ApiPathChanged)
                 .padding(10),
-            text_input("JSON body", &self.api_body)
+            text_input(&body_placeholder, &self.api_body)
                 .on_input(Message::ApiBodyChanged)
                 .padding(10),
-            button(text("Execute").size(14))
+            button(text(t!("actions.execute").to_string()).size(14))
                 .on_press_maybe((!self.loading).then_some(Message::ExecuteApi))
                 .style(button::primary),
-            text("Response").size(14),
+            text(t!("api.response").to_string()).size(14),
             scrollable(
                 container(text(&self.api_response).size(12))
                     .padding(12)
@@ -3349,12 +3838,71 @@ fn event_world_ids(event: &PipelineEvent) -> Vec<&str> {
     }
 }
 
-fn stat(label: &str, value: String) -> Element<'_, Message> {
+fn stat(label: String, value: String) -> Element<'static, Message> {
     container(column![text(label).size(12), text(value).size(28)].spacing(4))
         .padding(14)
         .width(Fill)
         .style(container::bordered_box)
         .into()
+}
+
+fn account_avatar<'a>(
+    name: &str,
+    avatar_url: Option<&str>,
+    thumbnails: &'a HashMap<String, image::Handle>,
+) -> Element<'a, Message> {
+    if let Some(handle) = avatar_url.and_then(|url| thumbnails.get(url)) {
+        return image(handle.clone())
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .content_fit(ContentFit::Cover)
+            .border_radius(15.0)
+            .into();
+    }
+
+    let initials = name
+        .split_whitespace()
+        .filter_map(|part| part.chars().next())
+        .take(2)
+        .collect::<String>();
+    let initials = if initials.is_empty() {
+        "VR".to_string()
+    } else {
+        initials.to_uppercase()
+    };
+
+    container(text(initials).size(10))
+        .width(Length::Fixed(30.0))
+        .height(Length::Fixed(30.0))
+        .center_x(Length::Fixed(30.0))
+        .center_y(Length::Fixed(30.0))
+        .style(|_| {
+            container::Style::default()
+                .background(Color::from_rgb8(219, 145, 29))
+                .border(Border {
+                    width: 0.0,
+                    radius: 15.0.into(),
+                    color: Color::from_rgb8(219, 145, 29),
+                })
+        })
+        .into()
+}
+
+fn account_menu_button(
+    icon: &'static str,
+    label: String,
+    message: Message,
+) -> Element<'static, Message> {
+    button(
+        row![text(icon).size(15), text(label).size(14).width(Fill)]
+            .spacing(10)
+            .align_y(iced::Center),
+    )
+    .on_press(message)
+    .style(button::text)
+    .padding([7, 4])
+    .width(Fill)
+    .into()
 }
 
 fn result_item(raw: Value) -> ResultItem {
@@ -3813,6 +4361,21 @@ fn search_modal_style(_: &Theme) -> container::Style {
             width: 1.0,
             radius: 8.0.into(),
             color: Color::from_rgb8(55, 58, 76),
+        })
+}
+
+fn account_menu_style(_: &Theme) -> container::Style {
+    container::Style::default()
+        .background(Color {
+            r: 0.11,
+            g: 0.11,
+            b: 0.12,
+            a: 0.95,
+        })
+        .border(Border {
+            width: 1.0,
+            radius: 8.0.into(),
+            color: Color::from_rgb8(72, 72, 78),
         })
 }
 
