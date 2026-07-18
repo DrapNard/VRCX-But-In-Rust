@@ -183,6 +183,49 @@ a standard OpenXR quad layer cannot overlay a different application's session.
 Platform matrix: macOS builds contain no VR module or VR runtime dependency, regardless of the
 requested feature flags. Windows builds contain the OpenVR/SteamVR path but exclude WayVR and
 OpenXR. Linux builds may contain both paths.
+
+### Lightweight screen notification overlay
+
+The desktop overlay displays click-through, always-on-top notifications in the top-right corner.
+It is fully event-driven: the transparent window is opened for active notifications and closed as
+soon as the bounded queue is empty, with no idle polling or frame-based animation.
+
+On first launch the application creates `screen-overlay.json` in its platform configuration
+directory. Each pipeline event has its own rule. An empty `selected_users` list accepts everyone;
+fill it with VRChat user IDs to notify only for selected people:
+
+The same settings are available from the application's general Settings dialog. Its tester renders
+the currently selected event rule with sample values before the editor saves it.
+
+```json
+{
+  "enabled": true,
+  "width": 380,
+  "margin": 18,
+  "spacing": 8,
+  "max_visible": 4,
+  "default_duration_seconds": 5.0,
+  "default_opacity": 0.86,
+  "background": "#11131E",
+  "foreground": "#F5F7FF",
+  "rules": {
+    "friend-online": {
+      "enabled": true,
+      "selected_users": ["usr_example"],
+      "title": "{name} is online",
+      "body": "Connected from {platform}",
+      "accent": "#6C8CFF",
+      "duration_seconds": 4.0,
+      "opacity": 0.82
+    }
+  }
+}
+```
+
+Available template values are `{event}`, `{name}`, `{user_id}`, `{platform}`, `{location}`, and
+`{message}`. Rules can use pipeline names such as `friend-online`, `friend-offline`,
+`friend-location`, `notification`, and `instance-queue-ready`.
+
 Development Commands
 
 Format code:

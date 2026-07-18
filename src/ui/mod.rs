@@ -14,6 +14,7 @@ use iced::{
         Space, button, column, container, image, mouse_area, opaque, row, rule, scrollable, stack,
         text, text_input,
     },
+    window,
 };
 use rust_i18n::t;
 use serde_json::Value;
@@ -360,6 +361,8 @@ impl Hash for SnapshotSubscription {
 }
 
 pub struct App {
+    main_window: window::Id,
+    screen_overlay: crate::screen_overlay::ScreenOverlay,
     backend: Option<Arc<Backend>>,
     snapshot: AppSnapshot,
     session: Option<AuthenticatedSession>,
@@ -405,10 +408,30 @@ pub struct App {
     api_path: String,
     api_body: String,
     api_response: String,
+    overlay_editor_rule: String,
+    overlay_editor_duration: String,
+    overlay_editor_opacity: String,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
+    MainWindowOpened,
+    WindowClosed(window::Id),
+    OverlayWindowOpened(window::Id),
+    OverlayExpired(u64),
+    ReloadScreenOverlay,
+    TestScreenOverlay,
+    ToggleScreenOverlay,
+    SelectOverlayRule(String),
+    ToggleOverlayRule,
+    OverlayRuleTitleChanged(String),
+    OverlayRuleBodyChanged(String),
+    OverlayRuleAccentChanged(String),
+    OverlayRuleDurationChanged(String),
+    OverlayRuleOpacityChanged(String),
+    OverlayRuleEveryone,
+    ToggleOverlayRuleUser(String),
+    SaveScreenOverlayEditor,
     BootFinished(Result<(Vec<SessionAccount>, Option<AuthenticatedSession>), String>),
     UsernameChanged(String),
     PasswordChanged(String),
@@ -477,24 +500,27 @@ enum Message {
 }
 
 pub fn run() -> iced::Result {
-    iced::application(App::boot, App::update, App::view)
-        .title("VRCX - BIR")
+    iced::daemon(App::boot, App::update, App::view_window)
+        .title(app_title)
         .theme(app_theme)
+        .style(app_style)
         .subscription(App::subscription)
-        .window(iced::window::Settings {
-            size: iced::Size::new(1180.0, 760.0),
-            min_size: Some(iced::Size::new(820.0, 560.0)),
-            ..Default::default()
-        })
         .run()
 }
 
 impl App {
     fn boot() -> (Self, Task<Message>) {
+        let (main_window, open_main) = window::open(window::Settings {
+            size: iced::Size::new(1180.0, 760.0),
+            min_size: Some(iced::Size::new(820.0, 560.0)),
+            ..Default::default()
+        });
         let locale = Locale::from_environment();
         rust_i18n::set_locale(locale.code());
 
         let mut app = Self {
+            main_window,
+            screen_overlay: crate::screen_overlay::ScreenOverlay::load(),
             backend: None,
             snapshot: AppSnapshot::default(),
             session: None,
@@ -540,6 +566,9 @@ impl App {
             api_path: String::new(),
             api_body: "{}".to_string(),
             api_response: String::new(),
+            overlay_editor_rule: "friend-online".to_string(),
+            overlay_editor_duration: String::new(),
+            overlay_editor_opacity: String::new(),
         };
 
         match BackendConfig::for_app().and_then(Backend::open) {
@@ -549,35 +578,228 @@ impl App {
                 app.backend = Some(backend);
                 (
                     app,
-                    Task::perform(
-                        async move {
-                            let sessions = task_backend
-                                .saved_sessions()
-                                .map_err(|error| error.to_string())?;
-                            let restored = if sessions.len() == 1 {
-                                task_backend
-                                    .restore_session()
-                                    .await
-                                    .map_err(|error| error.to_string())?
-                            } else {
-                                None
-                            };
-                            Ok((sessions, restored))
-                        },
-                        Message::BootFinished,
-                    ),
+                    Task::batch([
+                        open_main.map(|_| Message::MainWindowOpened),
+                        Task::perform(
+                            async move {
+                                let sessions = task_backend
+                                    .saved_sessions()
+                                    .map_err(|error| error.to_string())?;
+                                let restored = if sessions.len() == 1 {
+                                    task_backend
+                                        .restore_session()
+                                        .await
+                                        .map_err(|error| error.to_string())?
+                                } else {
+                                    None
+                                };
+                                Ok((sessions, restored))
+                            },
+                            Message::BootFinished,
+                        ),
+                    ]),
                 )
             }
             Err(error) => {
                 app.loading = false;
                 app.error = Some(error.to_string());
-                (app, Task::none())
+                (app, open_main.map(|_| Message::MainWindowOpened))
             }
         }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::MainWindowOpened => Task::none(),
+            Message::WindowClosed(id) => {
+                if id == self.main_window {
+                    iced::exit()
+                } else {
+                    if self.screen_overlay.window_id == Some(id) {
+                        self.screen_overlay.window_id = None;
+                    }
+                    Task::none()
+                }
+            }
+            Message::OverlayWindowOpened(id) => {
+                if self.screen_overlay.window_id == Some(id) {
+                    window::enable_mouse_passthrough(id)
+                } else {
+                    window::close(id)
+                }
+            }
+            Message::OverlayExpired(id) => {
+                let empty = self.screen_overlay.expire(id);
+                match self.screen_overlay.window_id {
+                    Some(window_id) if empty => {
+                        self.screen_overlay.window_id = None;
+                        window::close(window_id)
+                    }
+                    Some(window_id) => {
+                        window::resize(window_id, self.screen_overlay.window_settings().size)
+                    }
+                    None => Task::none(),
+                }
+            }
+            Message::ReloadScreenOverlay => {
+                let old_window = self.screen_overlay.window_id.take();
+                self.screen_overlay = crate::screen_overlay::ScreenOverlay::load();
+                let _ = self.screen_overlay.ingest(&self.snapshot.recent_events);
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get(&self.overlay_editor_rule)
+                {
+                    self.overlay_editor_duration = rule
+                        .duration_seconds
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    self.overlay_editor_opacity = rule
+                        .opacity
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                }
+                self.notice = Some(t!("screen_overlay.reloaded").to_string());
+                old_window.map_or_else(Task::none, window::close)
+            }
+            Message::TestScreenOverlay => {
+                let event = self.overlay_editor_rule.clone();
+                let toast = self.screen_overlay.preview(&event);
+                self.display_overlay_toasts(vec![toast])
+            }
+            Message::ToggleScreenOverlay => {
+                self.screen_overlay.config.enabled = !self.screen_overlay.config.enabled;
+                Task::none()
+            }
+            Message::SelectOverlayRule(event) => {
+                self.overlay_editor_rule = event;
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get(&self.overlay_editor_rule)
+                {
+                    self.overlay_editor_duration = rule
+                        .duration_seconds
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    self.overlay_editor_opacity = rule
+                        .opacity
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                }
+                Task::none()
+            }
+            Message::ToggleOverlayRule => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.enabled = !rule.enabled;
+                }
+                Task::none()
+            }
+            Message::OverlayRuleTitleChanged(value) => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.title = value;
+                }
+                Task::none()
+            }
+            Message::OverlayRuleBodyChanged(value) => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.body = value;
+                }
+                Task::none()
+            }
+            Message::OverlayRuleAccentChanged(value) => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.accent = value;
+                }
+                Task::none()
+            }
+            Message::OverlayRuleDurationChanged(value) => {
+                self.overlay_editor_duration = value;
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    if self.overlay_editor_duration.trim().is_empty() {
+                        rule.duration_seconds = None;
+                    } else if let Ok(duration) = self.overlay_editor_duration.parse::<f32>() {
+                        rule.duration_seconds = Some(duration.clamp(1.0, 30.0));
+                    }
+                }
+                Task::none()
+            }
+            Message::OverlayRuleOpacityChanged(value) => {
+                self.overlay_editor_opacity = value;
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    if self.overlay_editor_opacity.trim().is_empty() {
+                        rule.opacity = None;
+                    } else if let Ok(opacity) = self.overlay_editor_opacity.parse::<f32>() {
+                        rule.opacity = Some(opacity.clamp(0.15, 1.0));
+                    }
+                }
+                Task::none()
+            }
+            Message::OverlayRuleEveryone => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    rule.selected_users.clear();
+                }
+                Task::none()
+            }
+            Message::ToggleOverlayRuleUser(user_id) => {
+                if let Some(rule) = self
+                    .screen_overlay
+                    .config
+                    .rules
+                    .get_mut(&self.overlay_editor_rule)
+                {
+                    if rule.selected_users.is_empty() {
+                        rule.selected_users.insert(user_id);
+                    } else if !rule.selected_users.remove(&user_id) {
+                        rule.selected_users.insert(user_id);
+                    }
+                }
+                Task::none()
+            }
+            Message::SaveScreenOverlayEditor => {
+                match self.screen_overlay.save_config() {
+                    Ok(()) => self.notice = Some(t!("screen_overlay.saved").to_string()),
+                    Err(error) => self.error = Some(error),
+                }
+                Task::none()
+            }
             Message::BootFinished(result) => {
                 self.loading = false;
                 match result {
@@ -688,6 +910,8 @@ impl App {
                 self.loading = false;
                 match result {
                     Ok(()) => {
+                        let overlay_window = self.screen_overlay.window_id.take();
+                        self.screen_overlay.reset();
                         self.session = None;
                         self.snapshot = AppSnapshot::default();
                         self.results.clear();
@@ -698,7 +922,10 @@ impl App {
                         self.pending_thumbnails.clear();
                         self.favorite_friend_ids.clear();
                         self.two_factor_methods.clear();
-                        return self.load_saved_sessions();
+                        return Task::batch([
+                            self.load_saved_sessions(),
+                            overlay_window.map_or_else(Task::none, window::close),
+                        ]);
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -1248,10 +1475,12 @@ impl App {
                 Task::none()
             }
             Message::SnapshotLoaded(snapshot) => {
+                let new_toasts = self.screen_overlay.ingest(&snapshot.recent_events);
                 self.snapshot = snapshot;
                 Task::batch([
                     self.load_missing_thumbnails(),
                     self.load_missing_world_names(),
+                    self.display_overlay_toasts(new_toasts),
                 ])
             }
             Message::Synchronize => {
@@ -1478,16 +1707,53 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let Some(backend) = self.backend.as_ref().filter(|_| self.session.is_some()) else {
-            return Subscription::none();
-        };
-        Subscription::run_with(
-            SnapshotSubscription {
-                backend_id: Arc::as_ptr(backend) as usize,
-                receiver: backend.subscribe_state(),
-            },
-            snapshot_stream,
-        )
+        let windows = window::close_events().map(Message::WindowClosed);
+        let snapshots = self
+            .backend
+            .as_ref()
+            .filter(|_| self.session.is_some())
+            .map_or_else(Subscription::none, |backend| {
+                Subscription::run_with(
+                    SnapshotSubscription {
+                        backend_id: Arc::as_ptr(backend) as usize,
+                        receiver: backend.subscribe_state(),
+                    },
+                    snapshot_stream,
+                )
+            });
+        Subscription::batch([windows, snapshots])
+    }
+
+    fn display_overlay_toasts(
+        &mut self,
+        toasts: Vec<crate::screen_overlay::Toast>,
+    ) -> Task<Message> {
+        if toasts.is_empty() {
+            return Task::none();
+        }
+        let mut tasks = toasts
+            .into_iter()
+            .map(|toast| {
+                Task::perform(
+                    async move {
+                        tokio::time::sleep(toast.duration).await;
+                        toast.id
+                    },
+                    Message::OverlayExpired,
+                )
+            })
+            .collect::<Vec<_>>();
+        if let Some(id) = self.screen_overlay.window_id {
+            tasks.push(window::resize(
+                id,
+                self.screen_overlay.window_settings().size,
+            ));
+        } else {
+            let (id, open) = window::open(self.screen_overlay.window_settings());
+            self.screen_overlay.window_id = Some(id);
+            tasks.push(open.map(Message::OverlayWindowOpened));
+        }
+        Task::batch(tasks)
     }
 
     fn load_missing_thumbnails(&mut self) -> Task<Message> {
@@ -1989,6 +2255,20 @@ impl App {
         )
     }
 
+    fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        if self.screen_overlay.window_id == Some(id) {
+            self.screen_overlay.view()
+        } else {
+            container(self.view())
+                .width(Fill)
+                .height(Fill)
+                .style(|theme: &Theme| {
+                    container::Style::default().background(theme.palette().background)
+                })
+                .into()
+        }
+    }
+
     fn view(&self) -> Element<'_, Message> {
         if self.session.is_none() {
             return self.auth_view();
@@ -2274,6 +2554,8 @@ impl App {
         #[cfg(not(all(feature = "vr-overlay", not(target_os = "macos"))))]
         let vr_settings: Element<'_, Message> = Space::new().height(0).into();
 
+        let screen_overlay_options = self.screen_overlay_options();
+
         container(
             column![
                 row![
@@ -2285,23 +2567,193 @@ impl App {
                 ]
                 .align_y(iced::Center),
                 rule::horizontal(1),
-                text(t!("settings.sessions").to_string()).size(15),
-                sessions,
-                button(text(t!("account.add_session").to_string()).size(13))
-                    .on_press(Message::AddSession)
-                    .style(button::secondary)
-                    .padding([8, 12]),
-                Space::new().height(6),
-                text(t!("settings.localization").to_string()).size(15),
-                locale_controls,
-                vr_settings
+                scrollable(
+                    column![
+                        text(t!("settings.sessions").to_string()).size(15),
+                        sessions,
+                        button(text(t!("account.add_session").to_string()).size(13))
+                            .on_press(Message::AddSession)
+                            .style(button::secondary)
+                            .padding([8, 12]),
+                        Space::new().height(6),
+                        text(t!("settings.localization").to_string()).size(15),
+                        locale_controls,
+                        screen_overlay_options,
+                        vr_settings
+                    ]
+                    .spacing(12)
+                )
+                .spacing(SCROLLBAR_SPACING)
             ]
             .spacing(12),
         )
-        .width(Length::Fixed(520.0))
-        .max_width(520.0)
+        .width(Length::Fixed(720.0))
+        .height(Fill)
+        .max_width(720.0)
+        .max_height(680.0)
         .padding(18)
         .style(container::bordered_box)
+        .into()
+    }
+
+    fn screen_overlay_options(&self) -> Element<'_, Message> {
+        let selected_event = self.overlay_editor_rule.as_str();
+        let title_placeholder = t!("screen_overlay.title_template").to_string();
+        let body_placeholder = t!("screen_overlay.body_template").to_string();
+        let duration_placeholder = t!("screen_overlay.duration").to_string();
+        let opacity_placeholder = t!("screen_overlay.opacity").to_string();
+        let rule_buttons = self
+            .screen_overlay
+            .config
+            .rules
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .chunks(3)
+            .fold(column![].spacing(6), |rows, events| {
+                rows.push(events.iter().fold(row![].spacing(6), |row, event| {
+                    row.push(
+                        button(text(event.clone()).size(11))
+                            .on_press(Message::SelectOverlayRule(event.clone()))
+                            .style(if event == selected_event {
+                                button::primary
+                            } else {
+                                button::secondary
+                            })
+                            .padding([6, 8])
+                            .width(Fill),
+                    )
+                }))
+            });
+
+        let Some(event_rule) = self.screen_overlay.config.rules.get(selected_event) else {
+            return Space::new().height(0).into();
+        };
+        let global_label = if self.screen_overlay.config.enabled {
+            t!("screen_overlay.disable").to_string()
+        } else {
+            t!("screen_overlay.enable").to_string()
+        };
+        let rule_label = if event_rule.enabled {
+            t!("screen_overlay.disable_event").to_string()
+        } else {
+            t!("screen_overlay.enable_event").to_string()
+        };
+
+        let people_editor: Element<'_, Message> = if selected_event.starts_with("friend-") {
+            let mut friends = self.snapshot.friends.values().collect::<Vec<_>>();
+            friends.sort_by_key(|friend| {
+                (
+                    !self.favorite_friend_ids.contains(&friend.user_id),
+                    friend
+                        .display_name
+                        .as_deref()
+                        .unwrap_or(&friend.user_id)
+                        .to_lowercase(),
+                )
+            });
+            let friend_rows = friends
+                .into_iter()
+                .fold(column![].spacing(4), |rows, friend| {
+                    let selected = event_rule.selected_users.contains(&friend.user_id);
+                    let label = friend
+                        .display_name
+                        .as_deref()
+                        .unwrap_or(&friend.user_id)
+                        .to_string();
+                    rows.push(
+                        button(text(label).size(12))
+                            .on_press(Message::ToggleOverlayRuleUser(friend.user_id.clone()))
+                            .style(if selected {
+                                button::primary
+                            } else {
+                                button::secondary
+                            })
+                            .padding([6, 8])
+                            .width(Fill),
+                    )
+                });
+            column![
+                text(t!("screen_overlay.people").to_string()).size(13),
+                button(text(t!("screen_overlay.everyone").to_string()).size(12))
+                    .on_press(Message::OverlayRuleEveryone)
+                    .style(if event_rule.selected_users.is_empty() {
+                        button::primary
+                    } else {
+                        button::secondary
+                    }),
+                scrollable(friend_rows)
+                    .spacing(SCROLLBAR_SPACING)
+                    .height(Length::Fixed(130.0)),
+            ]
+            .spacing(6)
+            .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        column![
+            rule::horizontal(1),
+            row![
+                text(t!("screen_overlay.title").to_string()).size(16),
+                Space::new().width(Fill),
+                button(text(global_label).size(12))
+                    .on_press(Message::ToggleScreenOverlay)
+                    .style(button::secondary),
+                button(text(t!("screen_overlay.test").to_string()).size(12))
+                    .on_press(Message::TestScreenOverlay)
+                    .style(button::primary),
+            ]
+            .spacing(8)
+            .align_y(iced::Center),
+            text(t!("screen_overlay.description").to_string()).size(12),
+            rule_buttons,
+            row![
+                text(selected_event.to_string()).size(14),
+                Space::new().width(Fill),
+                button(text(rule_label).size(12))
+                    .on_press(Message::ToggleOverlayRule)
+                    .style(if event_rule.enabled {
+                        button::primary
+                    } else {
+                        button::secondary
+                    }),
+            ]
+            .align_y(iced::Center),
+            text_input(&title_placeholder, &event_rule.title)
+                .on_input(Message::OverlayRuleTitleChanged)
+                .padding(8),
+            text_input(&body_placeholder, &event_rule.body)
+                .on_input(Message::OverlayRuleBodyChanged)
+                .padding(8),
+            row![
+                text_input("#6C8CFF", &event_rule.accent)
+                    .on_input(Message::OverlayRuleAccentChanged)
+                    .padding(8),
+                text_input(&duration_placeholder, &self.overlay_editor_duration)
+                    .on_input(Message::OverlayRuleDurationChanged)
+                    .padding(8),
+                text_input(&opacity_placeholder, &self.overlay_editor_opacity)
+                    .on_input(Message::OverlayRuleOpacityChanged)
+                    .padding(8),
+            ]
+            .spacing(8),
+            people_editor,
+            row![
+                button(text(t!("screen_overlay.save").to_string()).size(12))
+                    .on_press(Message::SaveScreenOverlayEditor)
+                    .style(button::primary),
+                button(text(t!("screen_overlay.reload").to_string()).size(12))
+                    .on_press(Message::ReloadScreenOverlay)
+                    .style(button::secondary),
+                Space::new().width(Fill),
+                text(self.screen_overlay.config_path.display().to_string()).size(10),
+            ]
+            .spacing(8)
+            .align_y(iced::Center),
+            text(t!("screen_overlay.performance_hint").to_string()).size(11),
+        ]
+        .spacing(8)
         .into()
     }
 
@@ -3516,8 +3968,19 @@ impl App {
     }
 }
 
-fn app_theme(_: &App) -> Theme {
+fn app_theme(_: &App, _: window::Id) -> Theme {
     Theme::TokyoNight
+}
+
+fn app_title(_: &App, _: window::Id) -> String {
+    "VRCX - BIR".to_string()
+}
+
+fn app_style(_: &App, theme: &Theme) -> iced::theme::Style {
+    iced::theme::Style {
+        background_color: Color::TRANSPARENT,
+        text_color: theme.palette().text,
+    }
 }
 
 fn snapshot_stream(

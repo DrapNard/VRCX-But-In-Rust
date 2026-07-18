@@ -5,6 +5,7 @@ mod backend;
 mod client;
 mod error;
 mod models;
+mod screen_overlay;
 mod session;
 mod store;
 mod ui;

@@ -15,7 +15,7 @@ license-file = "LICENCE"
 category = "Utility"
 out-dir = "target/dist"
 binaries-dir = "target/release"
-before-packaging-command = "cargo build --release"
+before-packaging-command = "cargo build --release --all-features"
 icons = [
   "assets/icons/vrcx-bir.png",
   "assets/icons/vrcx-bir.ico",
