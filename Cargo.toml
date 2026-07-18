@@ -20,6 +20,9 @@ vr-notifications-ovr-toolkit = ["vr-overlay"]
 vr-wrist = ["vr-overlay"]
 vr-wrist-steamvr = ["vr-wrist", "dep:openvr"]
 vr-wrist-wayvr = ["vr-wrist", "dep:openxr"]
+# Convenient complete build profiles. Platform cfgs still remove unsupported runtimes.
+vr-windows = ["vr-notifications-xs", "vr-notifications-ovr-toolkit", "vr-wrist-steamvr"]
+vr-linux = ["vr-windows", "vr-wrist-wayvr"]
 
 [dependencies]
 futures-util = "0.3.32"

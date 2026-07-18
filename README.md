@@ -161,6 +161,12 @@ cargo build --release --features vr-wrist-steamvr
 
 # Wrist overlay model for a WayVR renderer
 cargo build --release --features vr-wrist-wayvr
+
+# Complete Windows build (XSOverlay + OVR Toolkit + SteamVR/OpenVR)
+cargo build --release --features vr-windows
+
+# Complete Linux build (Windows backends + WayVR/OpenXR)
+cargo build --release --features vr-linux
 ```
 
 The VR module is configured with JSON through `vr_overlay::load_config`. Notification

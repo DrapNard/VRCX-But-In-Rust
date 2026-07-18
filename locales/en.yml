@@ -90,6 +90,7 @@ pages:
   system: "System"
   users: "Users"
   worlds: "Worlds"
+  vr_overlay: "VR Overlay"
 search:
   filters: "Search filters"
   global: "Global search"
@@ -98,6 +99,12 @@ settings:
   no_sessions: "No saved sessions"
   sessions: "Connected sessions"
   title: "Settings"
+vr:
+  build_help: "Build command for the complete platform module"
+  compiled_backends: "Backends included in this executable"
+  open_page: "Open VR Overlay settings"
+  restart_hint: "Changing Cargo features requires rebuilding the executable. Runtime customization will be loaded from the overlay JSON configuration."
+  title: "VR Overlay"
 status:
   loading: "Loading..."
   no_items: "No items"

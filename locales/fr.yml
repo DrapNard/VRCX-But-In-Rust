@@ -90,6 +90,7 @@ pages:
   system: "Systeme"
   users: "Utilisateurs"
   worlds: "Mondes"
+  vr_overlay: "Overlay VR"
 search:
   filters: "Filtres de recherche"
   global: "Recherche globale"
@@ -98,6 +99,12 @@ settings:
   no_sessions: "Aucune session sauvegardee"
   sessions: "Sessions connectees"
   title: "Parametres"
+vr:
+  build_help: "Commande de compilation pour le module complet de cette plateforme"
+  compiled_backends: "Backends inclus dans cet executable"
+  open_page: "Ouvrir les parametres Overlay VR"
+  restart_hint: "Modifier les features Cargo necessite de recompiler l'executable. La personnalisation au runtime sera chargee depuis la configuration JSON de l'overlay."
+  title: "Overlay VR"
 status:
   loading: "Chargement..."
   no_items: "Aucun element"

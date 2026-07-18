@@ -67,10 +67,12 @@ enum Page {
     Prints,
     System,
     Api,
+    #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+    VrOverlay,
 }
 
 impl Page {
-    const ALL: [Page; 19] = [
+    const ALL: &'static [Page] = &[
         Page::Dashboard,
         Page::Notifications,
         Page::Worlds,
@@ -90,15 +92,19 @@ impl Page {
         Page::Prints,
         Page::System,
         Page::Api,
+        #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+        Page::VrOverlay,
     ];
 
-    const ESSENTIAL: [Page; 6] = [
+    const ESSENTIAL: &'static [Page] = &[
         Page::Dashboard,
         Page::Notifications,
         Page::Worlds,
         Page::Groups,
         Page::MyAvatars,
         Page::Favorites,
+        #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+        Page::VrOverlay,
     ];
 
     const SEARCH_FILTERS: [Page; 7] = [
@@ -134,6 +140,8 @@ impl Page {
             Self::Prints => t!("pages.prints").to_string(),
             Self::System => t!("pages.system").to_string(),
             Self::Api => t!("pages.api").to_string(),
+            #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+            Self::VrOverlay => t!("pages.vr_overlay").to_string(),
         }
     }
 
@@ -275,6 +283,40 @@ fn default_friend_section_row_limits() -> HashMap<FriendSection, usize> {
         .into_iter()
         .map(|section| (section, INITIAL_FRIEND_SECTION_ROWS))
         .collect()
+}
+
+#[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+fn vr_build_summary() -> String {
+    let mut backends = Vec::new();
+    if cfg!(feature = "vr-notifications-xs") {
+        backends.push("XSOverlay notifications");
+    }
+    if cfg!(feature = "vr-notifications-ovr-toolkit") {
+        backends.push("OVR Toolkit notifications");
+    }
+    if cfg!(all(
+        feature = "vr-wrist-steamvr",
+        any(target_os = "windows", target_os = "linux")
+    )) {
+        backends.push("SteamVR / OpenVR wrist overlay");
+    }
+    if cfg!(all(feature = "vr-wrist-wayvr", target_os = "linux")) {
+        backends.push("WayVR / OpenXR wrist overlay");
+    }
+    if backends.is_empty() {
+        "VR core only (no notification or wrist backend)".to_string()
+    } else {
+        backends.join("\n")
+    }
+}
+
+#[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+fn vr_build_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "cargo build --release --features vr-windows"
+    } else {
+        "cargo build --release --features vr-linux"
+    }
 }
 
 impl DetailTab {
@@ -1665,6 +1707,8 @@ impl App {
                     Page::Dashboard | Page::Friends | Page::Notifications => {
                         serde_json::to_value(Vec::<Value>::new())
                     }
+                    #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+                    Page::VrOverlay => serde_json::to_value(Vec::<Value>::new()),
                     Page::Worlds => serde_json::to_value(
                         backend
                             .api()
@@ -2214,6 +2258,22 @@ impl App {
                 )
             });
 
+        #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+        let vr_settings: Element<'_, Message> = column![
+            rule::horizontal(1),
+            text(t!("vr.title").to_string()).size(15),
+            text(vr_build_summary()).size(12),
+            button(text(t!("vr.open_page").to_string()).size(13))
+                .on_press(Message::Navigate(Page::VrOverlay))
+                .style(button::secondary)
+                .padding([8, 12])
+        ]
+        .spacing(9)
+        .into();
+
+        #[cfg(not(all(feature = "vr-overlay", not(target_os = "macos"))))]
+        let vr_settings: Element<'_, Message> = Space::new().height(0).into();
+
         container(
             column![
                 row![
@@ -2233,7 +2293,8 @@ impl App {
                     .padding([8, 12]),
                 Space::new().height(6),
                 text(t!("settings.localization").to_string()).size(15),
-                locale_controls
+                locale_controls,
+                vr_settings
             ]
             .spacing(12),
         )
@@ -2767,6 +2828,8 @@ impl App {
             Page::Friends => self.friends(),
             Page::Notifications => self.notifications(),
             Page::Api => self.api_workspace(),
+            #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+            Page::VrOverlay => self.vr_overlay_settings(),
             _ => self.resource_list(),
         };
 
@@ -2775,6 +2838,26 @@ impl App {
             .height(Fill)
             .width(Fill)
             .into()
+    }
+
+    #[cfg(all(feature = "vr-overlay", not(target_os = "macos")))]
+    fn vr_overlay_settings(&self) -> Element<'_, Message> {
+        let rows = column![
+            text(t!("vr.title").to_string()).size(26),
+            text(t!("vr.compiled_backends").to_string()).size(15),
+            container(text(vr_build_summary()).size(14))
+                .padding(14)
+                .width(Fill)
+                .style(container::bordered_box),
+            text(t!("vr.build_help").to_string()).size(15),
+            container(text(vr_build_command()).size(13))
+                .padding(14)
+                .width(Fill)
+                .style(container::bordered_box),
+            text(t!("vr.restart_hint").to_string()).size(12),
+        ]
+        .spacing(14);
+        scrollable(rows).into()
     }
 
     fn dashboard(&self) -> Element<'_, Message> {
